@@ -9,7 +9,6 @@ DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 LIVE_TRADES_CSV = DATA_DIR / "live_trades.csv"
-LIVE_LOG_FILE = DATA_DIR / "live_trader.log"
 EQUITY_LOG_CSV = DATA_DIR / "equity_curve.csv"
 
 INITIAL_BALANCE = 10_000.0

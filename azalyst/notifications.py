@@ -27,8 +27,8 @@ def send_telegram_alert(title: str, message: str):
     try:
         import requests
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        text = f"*{title}*\n\n{message}"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
+        text = f"{title}\n\n{message}"
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
         resp = requests.post(url, json=payload, timeout=5)
         resp.raise_for_status()
     except Exception as e:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import csv
 import signal
+import sqlite3
 import time
 import traceback
 from datetime import datetime, timezone
@@ -17,7 +17,7 @@ from azalyst.config import (
     BREAKEVEN_AFTER_SCANS, SCAN_INTERVAL_MIN, CANDLE_TF_MIN,
     PROP_MAX_DRAWDOWN_PCT, PROP_DAILY_LOSS_PCT, SLIPPAGE_BPS,
     BUY, SELL, EXCLUDE_SYMBOLS, MIN_VOLUME_MA, TOP_N_COINS,
-    LIVE_TRADES_CSV, EQUITY_LOG_CSV,
+    DATABASE_FILE,
 )
 from azalyst.logger import logger
 from azalyst.indicators import compute_indicators
@@ -40,6 +40,7 @@ class LiveTrader:
         self.symbols: List[str] = []
         self.last_scan_time = None
         self.next_scan_time = None
+        self.last_symbol_refresh_time = 0.0
         self.equity_curve: List[dict] = []
 
         self._load_state()
@@ -51,55 +52,105 @@ class LiveTrader:
         logger.info(f"Received shutdown signal. Closing {len(self.open_trades)} open trades...")
         self.running = False
 
+    def _init_db(self):
+        try:
+            with sqlite3.connect(DATABASE_FILE) as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS trades (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        symbol VARCHAR(50),
+                        direction INT,
+                        entry_price FLOAT,
+                        qty FLOAT,
+                        sl_price FLOAT,
+                        tp_price FLOAT,
+                        entry_time VARCHAR(50),
+                        exit_time VARCHAR(50),
+                        exit_price FLOAT,
+                        pnl_pct FLOAT,
+                        pnl_usd FLOAT,
+                        status VARCHAR(20),
+                        scan_count INT,
+                        max_price FLOAT,
+                        min_price FLOAT,
+                        reason TEXT,
+                        signal VARCHAR(50),
+                        strategies TEXT
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS equity_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp VARCHAR(50),
+                        balance FLOAT,
+                        open_trades INT,
+                        daily_pnl FLOAT
+                    )
+                """)
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to initialize database: {e}")
+
     def _load_state(self):
-        if LIVE_TRADES_CSV.exists():
-            try:
-                with open(LIVE_TRADES_CSV, "r", encoding="utf-8") as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        if row["status"] == "open":
-                            symbol = row["symbol"]
-                            self.open_trades[symbol] = {
-                                "symbol": symbol,
-                                "direction": int(row["direction"]),
-                                "entry_price": float(row["entry_price"]),
-                                "qty": float(row["qty"]),
-                                "sl_price": float(row["sl_price"]),
-                                "tp_price": float(row["tp_price"]),
-                                "entry_time": row["entry_time"],
-                                "scan_count": int(row.get("scan_count", 0)),
-                                "max_price": float(row.get("max_price", 0)),
-                                "min_price": float(row.get("min_price", 0)),
-                            }
-                        else:
-                            self.closed_trades.append(row)
-                logger.info(f"Loaded {len(self.open_trades)} open trades from {LIVE_TRADES_CSV}")
-            except Exception as e:
-                logger.error(f"Failed to load state: {e}")
+        self._init_db()
+        try:
+            with sqlite3.connect(DATABASE_FILE) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute("SELECT * FROM trades")
+                rows = cur.fetchall()
+                for row in rows:
+                    if row["status"] == "open":
+                        symbol = row["symbol"]
+                        self.open_trades[symbol] = {
+                            "id": row["id"],
+                            "symbol": symbol,
+                            "direction": int(row["direction"]),
+                            "entry_price": float(row["entry_price"]),
+                            "qty": float(row["qty"]),
+                            "sl_price": float(row["sl_price"]),
+                            "tp_price": float(row["tp_price"]),
+                            "entry_time": row["entry_time"],
+                            "scan_count": int(row.get("scan_count", 0) or 0),
+                            "max_price": float(row.get("max_price", 0) or 0),
+                            "min_price": float(row.get("min_price", 0) or 0),
+                            "signal": row.get("signal", ""),
+                            "strategies": row.get("strategies", ""),
+                        }
+                    else:
+                        self.closed_trades.append(dict(row))
+            logger.info(f"Loaded {len(self.open_trades)} open trades from database")
+        except Exception as e:
+            logger.error(f"Failed to load state: {e}")
 
     def _save_trade(self, trade: dict, status: str = "open"):
-        file_exists = LIVE_TRADES_CSV.exists()
-        fieldnames = [
-            "symbol", "direction", "entry_price", "qty", "sl_price", "tp_price",
-            "entry_time", "exit_time", "exit_price", "pnl_pct", "pnl_usd",
-            "status", "scan_count", "max_price", "min_price", "reason",
-        ]
-
-        with open(LIVE_TRADES_CSV, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-            if not file_exists:
-                writer.writeheader()
-
-            row = {**trade}
-            if status == "open":
-                row["exit_time"] = ""
-                row["exit_price"] = ""
-                row["pnl_pct"] = ""
-                row["pnl_usd"] = ""
-                row["reason"] = ""
-            row["status"] = status
-
-            writer.writerow(row)
+        try:
+            with sqlite3.connect(DATABASE_FILE) as conn:
+                cur = conn.cursor()
+                if status == "open" and "id" not in trade:
+                    cur.execute("""
+                        INSERT INTO trades (symbol, direction, entry_price, qty, sl_price, tp_price, entry_time,
+                        status, scan_count, max_price, min_price, signal, strategies)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        trade["symbol"], trade["direction"], trade["entry_price"], trade["qty"], trade["sl_price"],
+                        trade["tp_price"], trade["entry_time"], status, trade.get("scan_count", 0),
+                        trade.get("max_price", trade["entry_price"]), trade.get("min_price", trade["entry_price"]),
+                        trade.get("signal", ""), trade.get("strategies", "")
+                    ))
+                    trade["id"] = cur.lastrowid
+                elif status == "closed" and "id" in trade:
+                    cur.execute("""
+                        UPDATE trades SET exit_time = ?, exit_price = ?, pnl_pct = ?, pnl_usd = ?,
+                        status = ?, reason = ? WHERE id = ?
+                    """, (
+                        trade.get("exit_time", ""), trade.get("exit_price", 0.0), trade.get("pnl_pct", 0.0),
+                        trade.get("pnl_usd", 0.0), status, trade.get("reason", ""), trade["id"]
+                    ))
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to save trade: {e}")
 
     def _log_equity(self):
         point = {
@@ -110,12 +161,16 @@ class LiveTrader:
         }
         self.equity_curve.append(point)
 
-        file_exists = EQUITY_LOG_CSV.exists()
-        with open(EQUITY_LOG_CSV, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["timestamp", "balance", "open_trades", "daily_pnl"])
-            if not file_exists:
-                writer.writeheader()
-            writer.writerow(point)
+        try:
+            with sqlite3.connect(DATABASE_FILE) as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO equity_log (timestamp, balance, open_trades, daily_pnl)
+                    VALUES (?, ?, ?, ?)
+                """, (point["timestamp"], point["balance"], point["open_trades"], point["daily_pnl"]))
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to log equity: {e}")
 
     def get_status(self) -> dict:
         current_drawdown = (self.initial_balance - self.balance) / self.initial_balance * 100
@@ -179,19 +234,9 @@ class LiveTrader:
     def get_equity_curve(self) -> list:
         return self.equity_curve
 
-    def initialize(self):
-        logger.info("=" * 80)
-        logger.info("AZALYST ALPHA X — MULTI STRATEGY LIVE TRADER")
-        logger.info("=" * 80)
-        logger.info(f"Mode: {'DRY RUN (Paper Trading)' if self.dry_run else 'LIVE TRADING'}")
-        logger.info(f"Leverage: {LEVERAGE}x | Risk/Trade: {RISK_PER_TRADE * 100}%")
-        logger.info(f"Max DD: {PROP_MAX_DRAWDOWN_PCT}% | Daily Loss: {PROP_DAILY_LOSS_PCT}%")
-        logger.info(f"Max Open Trades: {MAX_OPEN_TRADES}")
-        logger.info(f"Scan Interval: {SCAN_INTERVAL_MIN} min")
-        logger.info(f"Candle TF: {CANDLE_TF_MIN} min")
-        logger.info("=" * 80)
-
-        logger.info("Loading markets from Binance...")
+    def _refresh_top_coins(self):
+        self.last_symbol_refresh_time = time.time()
+        logger.info("Loading markets from Binance to refresh top coins...")
         markets = self.exchange.load_markets()
 
         usdt_symbols = [
@@ -236,8 +281,22 @@ class LiveTrader:
                 except Exception as e:
                     logger.warn(f"Failed to set leverage for {symbol}: {e}")
 
-        logger.info(f"Initialization complete. Scanning {len(self.symbols)} symbols...")
+        logger.info(f"Symbol refresh complete. Actively tracking {len(self.symbols)} symbols...")
 
+    def initialize(self):
+        logger.info("=" * 80)
+        logger.info("AZALYST ALPHA X — MULTI STRATEGY LIVE TRADER")
+        logger.info("=" * 80)
+        logger.info(f"Mode: {'DRY RUN (Paper Trading)' if self.dry_run else 'LIVE TRADING'}")
+        logger.info(f"Leverage: {LEVERAGE}x | Risk/Trade: {RISK_PER_TRADE * 100}%")
+        logger.info(f"Max DD: {PROP_MAX_DRAWDOWN_PCT}% | Daily Loss: {PROP_DAILY_LOSS_PCT}%")
+        logger.info(f"Max Open Trades: {MAX_OPEN_TRADES}")
+        logger.info(f"Scan Interval: {SCAN_INTERVAL_MIN} min")
+        logger.info(f"Candle TF: {CANDLE_TF_MIN} min")
+        logger.info("=" * 80)
+        
+        self._refresh_top_coins()
+        
         send_alerts(
             "🚀 **TRADER STARTED**",
             f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}\n"
@@ -535,6 +594,9 @@ class LiveTrader:
 
             while self.running:
                 try:
+                    if time.time() - self.last_symbol_refresh_time >= 4 * 3600:
+                        self._refresh_top_coins()
+
                     self.scan_count += 1
                     self.last_scan_time = datetime.now(timezone.utc).isoformat()
                     self.next_scan_time = (datetime.now(timezone.utc) + __import__("datetime").timedelta(minutes=SCAN_INTERVAL_MIN)).isoformat()

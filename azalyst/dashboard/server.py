@@ -22,8 +22,8 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/trst_ping")
-def trst_ping():
+@app.route("/test_ping")
+def test_ping():
     return jsonify({"status": "healthy", "message": "pong"})
 
 

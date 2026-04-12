@@ -411,6 +411,7 @@ class LiveTrader:
             "min_price": fill_price,
             "signal": sig["signal"],
             "strategies": ", ".join(sig.get("strategies", [])),
+            "atr": atr,
         }
 
         if not self.dry_run:
@@ -441,7 +442,7 @@ class LiveTrader:
             f"Strategies: {', '.join(sig.get('strategies', []))}"
         )
 
-    def manage_open_trades(self):
+    def manage_open_trades(self, main_scan: bool = True):
         symbols_to_check = list(self.open_trades.keys())
 
         for symbol in symbols_to_check:
@@ -449,19 +450,18 @@ class LiveTrader:
                 continue
 
             trade = self.open_trades[symbol]
-            trade["scan_count"] += 1
+            if main_scan:
+                trade["scan_count"] += 1
 
             try:
                 ticker = self.exchange.fetch_ticker(symbol)
                 current_price = ticker["last"]
-                high = ticker["high"]
-                low = ticker["low"]
             except Exception as e:
                 logger.error(f"Failed to fetch ticker for {symbol}: {e}")
                 continue
 
-            trade["max_price"] = max(trade["max_price"], high)
-            trade["min_price"] = min(trade["min_price"], low)
+            trade["max_price"] = max(trade.get("max_price", current_price), current_price)
+            trade["min_price"] = min(trade.get("min_price", current_price), current_price)
 
             direction = trade["direction"]
             sl = trade["sl_price"]
@@ -473,20 +473,20 @@ class LiveTrader:
             reason = ""
 
             if direction == BUY:
-                if low <= sl:
+                if current_price <= sl:
                     exit_price = sl
                     reason = "STOP_LOSS"
                     closed = True
-                elif high >= tp:
+                elif current_price >= tp:
                     exit_price = tp
                     reason = "TAKE_PROFIT"
                     closed = True
             else:
-                if high >= sl:
+                if current_price >= sl:
                     exit_price = sl
                     reason = "STOP_LOSS"
                     closed = True
-                elif low <= tp:
+                elif current_price <= tp:
                     exit_price = tp
                     reason = "TAKE_PROFIT"
                     closed = True
@@ -496,7 +496,7 @@ class LiveTrader:
                 
                 # Multi-Stage Trailing Stop
                 try:
-                    current_atr = df["atr_14"].iloc[-1] if 'df' in locals() else trade.get("atr", current_price * 0.01)
+                    current_atr = trade.get("atr", current_price * 0.01)
                 except:
                     current_atr = current_price * 0.01
 
@@ -651,7 +651,7 @@ class LiveTrader:
 
                     self.reset_daily_pnl()
                     self.scan_and_trade()
-                    self.manage_open_trades()
+                    self.manage_open_trades(main_scan=True)
                     self._log_equity()
                     self.print_status()
 
@@ -659,6 +659,10 @@ class LiveTrader:
                     for _ in range(SCAN_INTERVAL_MIN * 6):
                         if not self.running:
                             break
+                        try:
+                            self.manage_open_trades(main_scan=False)
+                        except Exception as e:
+                            logger.error(f"Error managing trades: {e}")
                         time.sleep(10)
 
                 except Exception as e:

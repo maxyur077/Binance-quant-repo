@@ -17,7 +17,8 @@ from azalyst.config import (
     BREAKEVEN_AFTER_SCANS, SCAN_INTERVAL_MIN, CANDLE_TF_MIN,
     PROP_MAX_DRAWDOWN_PCT, PROP_DAILY_LOSS_PCT, SLIPPAGE_BPS,
     BUY, SELL, EXCLUDE_SYMBOLS, MIN_VOLUME_MA, TOP_N_COINS,
-    DATABASE_FILE,
+    DATABASE_FILE, MAX_SAME_DIRECTION, HTF_TIMEFRAME, HTF_CANDLE_LIMIT,
+    HTF_EMA_FAST, HTF_EMA_SLOW,
 )
 from azalyst.logger import logger
 from azalyst.indicators import compute_indicators
@@ -346,6 +347,13 @@ class LiveTrader:
             if symbol in self.open_trades:
                 continue
 
+            # Correlation guard
+            same_direction_trades = len([t for t in self.open_trades.values() if t["direction"] == BUY])
+            if (same_direction_trades >= MAX_SAME_DIRECTION or 
+               len(self.open_trades) - same_direction_trades >= MAX_SAME_DIRECTION):
+               logger.info(f"Correlation limit reached. Skipping remaining symbols.")
+               break
+
             df = self.fetch_ohlcv(symbol, f"{CANDLE_TF_MIN}m", 250)
             if df.empty or len(df) < 200:
                 continue
@@ -354,7 +362,13 @@ class LiveTrader:
             if df["atr_14"].iloc[-1] == 0 or np.isnan(df["atr_14"].iloc[-1]):
                 continue
 
-            sig = multi_strategy_scan(df)
+            # Fetch Higher-Timeframe Data
+            htf_df = self.fetch_ohlcv(symbol, HTF_TIMEFRAME, limit=HTF_CANDLE_LIMIT)
+            if not htf_df.empty:
+                htf_df["ema_50"] = htf_df["close"].ewm(span=HTF_EMA_FAST, adjust=False).mean()
+                htf_df["ema_200"] = htf_df["close"].ewm(span=HTF_EMA_SLOW, adjust=False).mean()
+
+            sig = multi_strategy_scan(df, htf_df=htf_df)
             if sig is None:
                 continue
 
@@ -479,7 +493,41 @@ class LiveTrader:
 
             if not closed and trade["scan_count"] >= BREAKEVEN_AFTER_SCANS:
                 pnl_pct = (current_price - entry) / entry * 100 if direction == BUY else (entry - current_price) / entry * 100
-                if pnl_pct > 0.3:
+                
+                # Multi-Stage Trailing Stop
+                try:
+                    current_atr = df["atr_14"].iloc[-1] if 'df' in locals() else trade.get("atr", current_price * 0.01)
+                except:
+                    current_atr = current_price * 0.01
+
+                if pnl_pct > 2.0:
+                    # Stage 3: Trail heavily in profit
+                    if direction == BUY:
+                        new_sl = current_price - 1.0 * current_atr
+                        if new_sl > trade["sl_price"]:
+                            trade["sl_price"] = new_sl
+                            logger.info(f"Moved {symbol} SL to deep trailing @ ${new_sl:.4f}")
+                    else:
+                        new_sl = current_price + 1.0 * current_atr
+                        if new_sl < trade["sl_price"]:
+                            trade["sl_price"] = new_sl
+                            logger.info(f"Moved {symbol} SL to deep trailing @ ${new_sl:.4f}")
+                
+                elif pnl_pct > 1.0:
+                    # Stage 2: Trail above entry
+                    if direction == BUY:
+                        new_sl = entry + 0.5 * current_atr
+                        if new_sl > trade["sl_price"]:
+                            trade["sl_price"] = new_sl
+                            logger.info(f"Moved {symbol} SL to locked profit @ ${new_sl:.4f}")
+                    else:
+                        new_sl = entry - 0.5 * current_atr
+                        if new_sl < trade["sl_price"]:
+                            trade["sl_price"] = new_sl
+                            logger.info(f"Moved {symbol} SL to locked profit @ ${new_sl:.4f}")
+
+                elif pnl_pct > 0.3:
+                    # Stage 1: Breakeven
                     if direction == BUY and sl < entry:
                         trade["sl_price"] = entry
                         logger.info(f"Moved {symbol} SL to breakeven @ ${entry:.4f}")

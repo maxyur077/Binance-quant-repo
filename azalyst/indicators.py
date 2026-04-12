@@ -84,4 +84,11 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     df["momentum_9"] = df["close"].diff(9)
 
+    # CVD (Cumulative Volume Delta) approximation
+    range_hl = (df["high"] - df["low"]).replace(0.0, 1e-8)
+    buy_vol = df["volume"] * (df["close"] - df["low"]) / range_hl
+    sell_vol = df["volume"] * (df["high"] - df["close"]) / range_hl
+    delta = buy_vol - sell_vol
+    df["cvd"] = delta.cumsum()
+
     return df

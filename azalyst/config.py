@@ -12,12 +12,12 @@ DATABASE_FILE = DATA_DIR / "trader.db"
 
 INITIAL_BALANCE = 10_000.0
 LEVERAGE = 5
-RISK_PER_TRADE = 0.05
+RISK_PER_TRADE = 0.03
 ATR_MULT = 1.2
 TP_RR_RATIO = 2.0
 SL_MIN_PCT = 0.01
 SL_MAX_PCT = 0.05
-MAX_OPEN_TRADES = 20
+MAX_OPEN_TRADES = 10
 MAX_HOLD_SCANS = 24
 BREAKEVEN_AFTER_SCANS = 4
 SCAN_INTERVAL_MIN = 30
@@ -30,7 +30,7 @@ TAKER_FEE = 0.0004
 SLIPPAGE_BPS = 1.0
 
 MIN_AGREEMENT = 3
-WEIGHTED_THRESHOLD = 3.5
+WEIGHTED_THRESHOLD = 4.0
 
 BUY = 1
 SELL = -1
@@ -39,12 +39,25 @@ HOLD = 0
 MULTI_WEIGHTS = {
     "bnf": 2.0,
     "nbb": 2.0,
-    "kane": 1.5,
+    "kane": 1.0,
     "umar": 1.2,
     "zamco": 1.0,
-    "jadecap": 1.0,
+    "jadecap": 0.8,
     "marci": 1.0,
+    "fvg": 2.0,
+    "ote": 1.5,
+    "cvd_divergence": 1.5,
+    "wyckoff": 2.0,
 }
+
+# Higher-Timeframe Trend Filter
+HTF_TIMEFRAME = "4h"
+HTF_CANDLE_LIMIT = 200
+HTF_EMA_FAST = 50
+HTF_EMA_SLOW = 200
+
+# Correlation guard: max trades in same direction
+MAX_SAME_DIRECTION = 5
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/1479100617283866785/W_vMrnVx40Bb0JLr75AVONGF-Z783MYm-H4IRB17CO9ujA3raNGie5m07vqdgMmwndlG")
 

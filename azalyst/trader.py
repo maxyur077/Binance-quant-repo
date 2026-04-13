@@ -491,47 +491,49 @@ class LiveTrader:
                     reason = "TAKE_PROFIT"
                     closed = True
 
-            if not closed and trade["scan_count"] >= BREAKEVEN_AFTER_SCANS:
+            if not closed:
                 pnl_pct = (current_price - entry) / entry * 100 if direction == BUY else (entry - current_price) / entry * 100
                 
-                # Multi-Stage Trailing Stop
                 try:
                     current_atr = trade.get("atr", current_price * 0.01)
                 except:
                     current_atr = current_price * 0.01
 
-                if pnl_pct > 2.0:
-                    # Stage 3: Trail heavily in profit
+                # Profit-based Trailing Stops (Instant Trigger)
+                if pnl_pct >= 3.0:
+                    # Stage 3: Trail heavily in profit from 3% onwards
+                    trail_dist = max(current_atr, current_price * 0.015)
                     if direction == BUY:
-                        new_sl = current_price - 1.0 * current_atr
+                        new_sl = current_price - trail_dist
                         if new_sl > trade["sl_price"]:
                             trade["sl_price"] = new_sl
-                            logger.info(f"Moved {symbol} SL to deep trailing @ ${new_sl:.4f}")
+                            logger.info(f"Moved {symbol} SL to deep trailing @ ${new_sl:.4f} (Profit >= 3%)")
                     else:
-                        new_sl = current_price + 1.0 * current_atr
+                        new_sl = current_price + trail_dist
                         if new_sl < trade["sl_price"]:
                             trade["sl_price"] = new_sl
-                            logger.info(f"Moved {symbol} SL to deep trailing @ ${new_sl:.4f}")
+                            logger.info(f"Moved {symbol} SL to deep trailing @ ${new_sl:.4f} (Profit >= 3%)")
                 
-                elif pnl_pct > 1.0:
-                    # Stage 2: Trail above entry
+                elif pnl_pct >= 1.0:
+                    # Stage 2: Trail above entry securely
+                    trail_dist = max(current_atr * 0.5, current_price * 0.005)
                     if direction == BUY:
-                        new_sl = entry + 0.5 * current_atr
+                        new_sl = entry + trail_dist
                         if new_sl > trade["sl_price"]:
                             trade["sl_price"] = new_sl
                             logger.info(f"Moved {symbol} SL to locked profit @ ${new_sl:.4f}")
                     else:
-                        new_sl = entry - 0.5 * current_atr
+                        new_sl = entry - trail_dist
                         if new_sl < trade["sl_price"]:
                             trade["sl_price"] = new_sl
                             logger.info(f"Moved {symbol} SL to locked profit @ ${new_sl:.4f}")
 
-                elif pnl_pct > 0.3:
-                    # Stage 1: Breakeven
-                    if direction == BUY and sl < entry:
+                # Time-based Breakeven
+                if trade["scan_count"] >= BREAKEVEN_AFTER_SCANS and pnl_pct > 0.3:
+                    if direction == BUY and trade["sl_price"] < entry:
                         trade["sl_price"] = entry
                         logger.info(f"Moved {symbol} SL to breakeven @ ${entry:.4f}")
-                    elif direction == SELL and sl > entry:
+                    elif direction == SELL and trade["sl_price"] > entry:
                         trade["sl_price"] = entry
                         logger.info(f"Moved {symbol} SL to breakeven @ ${entry:.4f}")
 
@@ -541,6 +543,8 @@ class LiveTrader:
                 closed = True
 
             if closed:
+                if reason == "STOP_LOSS" and exit_price == entry:
+                    reason = "BREAKEVEN"
                 self.close_trade(symbol, exit_price, reason)
 
     def close_trade(self, symbol: str, exit_price: float, reason: str):
@@ -656,14 +660,15 @@ class LiveTrader:
                     self.print_status()
 
                     logger.info(f"Next scan in {SCAN_INTERVAL_MIN} minutes...")
-                    for _ in range(SCAN_INTERVAL_MIN * 6):
+                    loops = (SCAN_INTERVAL_MIN * 60) // 2
+                    for _ in range(loops):
                         if not self.running:
                             break
                         try:
                             self.manage_open_trades(main_scan=False)
                         except Exception as e:
                             logger.error(f"Error managing trades: {e}")
-                        time.sleep(10)
+                        time.sleep(2)
 
                 except Exception as e:
                     logger.error(f"Scan error: {e}\n{traceback.format_exc()}")

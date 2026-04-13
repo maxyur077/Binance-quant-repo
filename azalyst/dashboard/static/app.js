@@ -179,7 +179,8 @@
         const closedData = await fetchJSON("/api/trades/closed");
         if (closedData && closedData.length > 0) {
             const wins = closedData.filter(function (t) { return parseFloat(t.pnl_usd) > 0; }).length;
-            const wr = (wins / closedData.length * 100);
+            const validTrades = closedData.filter(function (t) { return Math.abs(parseFloat(t.pnl_usd)) > 0.001; }).length || 1;
+            const wr = (wins / validTrades * 100);
             $("metricWinRate").textContent = wr.toFixed(1) + "%";
             $("metricWinRate").className = "metric-value " + (wr >= 50 ? "positive" : "negative");
         }

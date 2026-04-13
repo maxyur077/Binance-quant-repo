@@ -1,5 +1,5 @@
 (function () {
-    const REFRESH_MS = 10000;
+    const REFRESH_MS = 3000;
     let equityChartInstance = null;
     let nextScanISO = null;
     let countdownInterval = null;
@@ -45,6 +45,8 @@
         const r = reason.toUpperCase();
         let cls = "reason-tag ";
         if (r.includes("TAKE_PROFIT")) cls += "reason-tp";
+        else if (r.includes("BREAKEVEN")) cls += "reason-be";
+        else if (r.includes("MANUAL")) cls += "reason-manual";
         else if (r.includes("STOP_LOSS")) cls += "reason-sl";
         else if (r.includes("MAX_HOLD")) cls += "reason-time";
         else cls += "reason-stop";
@@ -97,6 +99,84 @@
         }
     }
 
+    async function postJSON(url, body) {
+        try {
+            const res = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+            return await res.json();
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // ─── Manual Close Trade ───
+    async function closeTrade(symbol) {
+        const btn = document.querySelector('[data-symbol="' + symbol + '"]');
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = "Closing...";
+        }
+        const result = await postJSON("/api/trades/close", { symbol: symbol });
+        if (result && result.success) {
+            refresh();
+        } else {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = "EXIT";
+            }
+            alert("Failed to close " + symbol + ": " + (result ? result.error : "Network error"));
+        }
+    }
+
+    // Make closeTrade available globally for inline onclick
+    window.closeTrade = closeTrade;
+
+    // ─── Daily Target Modal ───
+    function setupModal() {
+        var overlay = $("targetModalOverlay");
+        var openBtn = $("openTargetModal");
+        var closeBtn = $("closeTargetModal");
+        var cancelBtn = $("cancelTarget");
+        var saveBtn = $("saveTarget");
+        var input = $("dailyTargetInput");
+
+        function openModal() {
+            overlay.classList.add("visible");
+            input.focus();
+        }
+
+        function closeModal() {
+            overlay.classList.remove("visible");
+        }
+
+        openBtn.addEventListener("click", openModal);
+        closeBtn.addEventListener("click", closeModal);
+        cancelBtn.addEventListener("click", closeModal);
+
+        overlay.addEventListener("click", function (e) {
+            if (e.target === overlay) closeModal();
+        });
+
+        saveBtn.addEventListener("click", async function () {
+            var val = parseFloat(input.value);
+            if (isNaN(val) || val < 0) {
+                input.style.borderColor = "var(--red)";
+                return;
+            }
+            input.style.borderColor = "";
+            await postJSON("/api/daily_target", { target: val });
+            closeModal();
+            refresh();
+        });
+
+        input.addEventListener("keydown", function (e) {
+            if (e.key === "Enter") saveBtn.click();
+        });
+    }
+
     async function updateStatus() {
         const data = await fetchJSON("/api/status");
         if (!data) return;
@@ -107,6 +187,13 @@
         const dpnl = parseFloat(data.daily_pnl);
         $("metricDailyPnl").textContent = formatUSD(dpnl);
         $("metricDailyPnl").className = "metric-value " + metricClass(dpnl);
+
+        // Update modal's current PnL display
+        var modalPnl = $("modalCurrentPnl");
+        if (modalPnl) {
+            modalPnl.textContent = formatUSD(dpnl);
+            modalPnl.className = "modal-current-value " + metricClass(dpnl);
+        }
 
         const dd = parseFloat(data.drawdown_pct);
         $("metricDrawdown").textContent = dd.toFixed(2) + "%";
@@ -119,7 +206,10 @@
 
         const pill = $("statusPill");
         const label = $("modeLabel");
-        if (data.dry_run) {
+        if (data.daily_target_reached) {
+            pill.className = "status-pill dry";
+            label.textContent = "TARGET MET";
+        } else if (data.dry_run) {
             pill.className = "status-pill dry";
             label.textContent = "DRY RUN";
         } else {
@@ -139,6 +229,34 @@
         $("propDailyFill").style.width = dailyPct + "%";
         $("propDailyValue").textContent = "$" + dailyUsed.toFixed(0) + " / $" + dailyLimit.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
+        // Daily Profit Target Bar
+        var targetBar = $("dailyTargetBar");
+        var propBar = $("propFirmBar");
+        var targetBtn = $("openTargetModal");
+        var targetBtnLabel = $("targetBtnLabel");
+        if (data.daily_profit_target > 0) {
+            targetBar.style.display = "block";
+            propBar.classList.add("has-target");
+
+            var targetPct = Math.min(Math.max(dpnl, 0) / data.daily_profit_target * 100, 100);
+            $("propTargetFill").style.width = targetPct + "%";
+            $("propTargetValue").textContent = "$" + Math.max(dpnl, 0).toFixed(2) + " / $" + data.daily_profit_target.toFixed(2);
+
+            if (data.daily_target_reached) {
+                targetBar.classList.add("reached");
+            } else {
+                targetBar.classList.remove("reached");
+            }
+
+            targetBtn.classList.add("active");
+            targetBtnLabel.textContent = "$" + data.daily_profit_target.toFixed(2);
+        } else {
+            targetBar.style.display = "none";
+            propBar.classList.remove("has-target");
+            targetBtn.classList.remove("active");
+            targetBtnLabel.textContent = "Set Target";
+        }
+
         $("lastUpdate").textContent = "Last update: " + new Date().toLocaleTimeString();
     }
 
@@ -150,21 +268,24 @@
         const tbody = $("openTradesBody");
 
         if (trades.length === 0) {
-            tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No open positions</td></tr>';
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="10">No open positions</td></tr>';
             return;
         }
 
         tbody.innerHTML = trades.map(function (t) {
             const sideClass = t.direction === "LONG" ? "side-long" : "side-short";
+            const pnlCls = pnlClass(t.pnl_pct);
             return '<tr class="data-flash">' +
                 "<td>" + t.symbol + "</td>" +
                 '<td><span class="' + sideClass + '">' + t.direction + "</span></td>" +
                 "<td>" + formatPrice(t.entry_price) + "</td>" +
+                "<td>" + formatPrice(t.live_price) + "</td>" +
+                '<td class="' + pnlCls + '">' + formatPct(t.pnl_pct) + " (" + formatUSD(t.pnl_usd) + ")</td>" +
                 "<td>" + formatPrice(t.sl_price) + "</td>" +
                 "<td>" + formatPrice(t.tp_price) + "</td>" +
-                "<td>" + parseFloat(t.qty).toFixed(4) + "</td>" +
                 '<td><div class="strategies-tags">' + strategyTags(t.strategies) + "</div></td>" +
                 "<td>" + t.scan_count + "/" + t.max_hold + "</td>" +
+                '<td><button class="exit-btn" data-symbol="' + t.symbol + '" onclick="closeTrade(\'' + t.symbol + '\')">EXIT</button></td>' +
                 "</tr>";
         }).join("");
     }
@@ -176,7 +297,7 @@
         $("closedBadge").textContent = trades.length;
         const tbody = $("closedTradesBody");
 
-        const closedData = await fetchJSON("/api/trades/closed");
+        const closedData = trades;
         if (closedData && closedData.length > 0) {
             const wins = closedData.filter(function (t) { return parseFloat(t.pnl_usd) > 0; }).length;
             const validTrades = closedData.filter(function (t) { return Math.abs(parseFloat(t.pnl_usd)) > 0.001; }).length || 1;
@@ -309,6 +430,7 @@
         ]);
     }
 
+    setupModal();
     startCountdown();
     refresh();
     setInterval(refresh, REFRESH_MS);

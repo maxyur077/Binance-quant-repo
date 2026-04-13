@@ -43,6 +43,9 @@ class LiveTrader:
         self.next_scan_time = None
         self.last_symbol_refresh_time = 0.0
         self.equity_curve: List[dict] = []
+        self.daily_profit_target = 0.0
+        self.daily_target_reached = False
+        self._live_prices: Dict[str, float] = {}
 
         self._load_state()
 
@@ -173,6 +176,11 @@ class LiveTrader:
         except Exception as e:
             logger.error(f"Failed to log equity: {e}")
 
+    def set_daily_profit_target(self, target: float):
+        self.daily_profit_target = target
+        self.daily_target_reached = False
+        logger.info(f"Daily profit target set to ${target:.2f}")
+
     def get_status(self) -> dict:
         current_drawdown = (self.initial_balance - self.balance) / self.initial_balance * 100
         return {
@@ -192,6 +200,8 @@ class LiveTrader:
             "risk_per_trade": RISK_PER_TRADE,
             "prop_max_dd": PROP_MAX_DRAWDOWN_PCT,
             "prop_daily_loss": PROP_DAILY_LOSS_PCT,
+            "daily_profit_target": round(self.daily_profit_target, 2),
+            "daily_target_reached": self.daily_target_reached,
         }
 
     def get_open_trades(self) -> list:
@@ -199,10 +209,19 @@ class LiveTrader:
         for sym, t in self.open_trades.items():
             direction = t["direction"]
             entry = t["entry_price"]
+            live_price = self._live_prices.get(sym, entry)
+            if direction == BUY:
+                pnl_pct = (live_price - entry) / entry * 100
+            else:
+                pnl_pct = (entry - live_price) / entry * 100
+            pnl_usd = self.balance * pnl_pct / 100 * RISK_PER_TRADE * LEVERAGE
             result.append({
                 "symbol": sym,
                 "direction": "LONG" if direction == BUY else "SHORT",
                 "entry_price": round(entry, 6),
+                "live_price": round(live_price, 6),
+                "pnl_pct": round(pnl_pct, 2),
+                "pnl_usd": round(pnl_usd, 2),
                 "sl_price": round(t["sl_price"], 6),
                 "tp_price": round(t["tp_price"], 6),
                 "qty": round(t["qty"], 6),
@@ -215,6 +234,18 @@ class LiveTrader:
                 "signal": t.get("signal", ""),
             })
         return result
+
+    def manual_close_trade(self, symbol: str) -> dict:
+        if symbol not in self.open_trades:
+            return {"error": f"{symbol} not found in open trades"}
+        try:
+            ticker = self.exchange.fetch_ticker(symbol)
+            current_price = ticker["last"]
+            self.close_trade(symbol, current_price, "MANUAL_EXIT")
+            return {"success": True, "symbol": symbol, "exit_price": current_price}
+        except Exception as e:
+            logger.error(f"Manual close failed for {symbol}: {e}")
+            return {"error": str(e)}
 
     def get_closed_trades(self) -> list:
         result = []
@@ -337,6 +368,17 @@ class LiveTrader:
         if not self.check_prop_firm_limits():
             return
 
+        if self.daily_profit_target > 0 and self.daily_pnl >= self.daily_profit_target:
+            if not self.daily_target_reached:
+                self.daily_target_reached = True
+                logger.info(f"🎯 DAILY PROFIT TARGET REACHED: ${self.daily_pnl:.2f} >= ${self.daily_profit_target:.2f}")
+                send_alerts(
+                    "🎯 **DAILY TARGET REACHED**",
+                    f"Profit: ${self.daily_pnl:.2f} / Target: ${self.daily_profit_target:.2f}\n"
+                    f"Bot will stop taking new trades until tomorrow."
+                )
+            return
+
         if len(self.open_trades) >= MAX_OPEN_TRADES:
             logger.info(f"Max trades reached ({len(self.open_trades)}). Skipping scan.")
             return
@@ -398,6 +440,9 @@ class LiveTrader:
             sl_price = fill_price + sl_dist
             tp_price = fill_price - sl_dist * TP_RR_RATIO
 
+        # Calculate SL distance as % of entry - used for dynamic trailing trigger
+        sl_dist_pct = sl_dist / fill_price * 100
+
         trade = {
             "symbol": symbol,
             "direction": direction,
@@ -405,6 +450,7 @@ class LiveTrader:
             "qty": qty,
             "sl_price": sl_price,
             "tp_price": tp_price,
+            "sl_dist_pct": round(sl_dist_pct, 4),
             "entry_time": datetime.now(timezone.utc).isoformat(),
             "scan_count": 0,
             "max_price": fill_price,
@@ -456,6 +502,7 @@ class LiveTrader:
             try:
                 ticker = self.exchange.fetch_ticker(symbol)
                 current_price = ticker["last"]
+                self._live_prices[symbol] = current_price
             except Exception as e:
                 logger.error(f"Failed to fetch ticker for {symbol}: {e}")
                 continue
@@ -499,43 +546,38 @@ class LiveTrader:
                 except:
                     current_atr = current_price * 0.01
 
-                # Profit-based Trailing Stops (Instant Trigger)
-                if pnl_pct >= 3.0:
-                    # Stage 3: Trail heavily in profit from 3% onwards
+                # ─── Dynamic Trailing Stop Logic ───
+                # Trigger threshold = same as the SL distance set at entry.
+                # e.g. if SL was 1.5% away → trail activates at +1.5% profit
+                #      if SL was 3.0% away → trail activates at +3.0% profit
+                # This keeps the trailing proportional to TP_RR_RATIO automatically.
+                # Trail distance = 1.5% of current price or 1x ATR, whichever is larger.
+
+                sl_dist_pct = trade.get("sl_dist_pct", 2.0)  # fallback 2.0 for legacy trades
+                trail_trigger_pct = sl_dist_pct  # activate trailing when profit >= SL distance
+
+                if pnl_pct >= trail_trigger_pct:
                     trail_dist = max(current_atr, current_price * 0.015)
                     if direction == BUY:
                         new_sl = current_price - trail_dist
+                        # Ensure SL is at least at entry (never go below breakeven)
+                        new_sl = max(new_sl, entry)
                         if new_sl > trade["sl_price"]:
                             trade["sl_price"] = new_sl
-                            logger.info(f"Moved {symbol} SL to deep trailing @ ${new_sl:.4f} (Profit >= 3%)")
+                            logger.info(
+                                f"📈 Trailing {symbol} SL → ${new_sl:.4f} "
+                                f"(PnL: {pnl_pct:+.2f}% | Trigger: {trail_trigger_pct:.2f}%)"
+                            )
                     else:
                         new_sl = current_price + trail_dist
+                        # Ensure SL is at most at entry (never go above breakeven for shorts)
+                        new_sl = min(new_sl, entry)
                         if new_sl < trade["sl_price"]:
                             trade["sl_price"] = new_sl
-                            logger.info(f"Moved {symbol} SL to deep trailing @ ${new_sl:.4f} (Profit >= 3%)")
-                
-                elif pnl_pct >= 1.0:
-                    # Stage 2: Trail above entry securely
-                    trail_dist = max(current_atr * 0.5, current_price * 0.005)
-                    if direction == BUY:
-                        new_sl = entry + trail_dist
-                        if new_sl > trade["sl_price"]:
-                            trade["sl_price"] = new_sl
-                            logger.info(f"Moved {symbol} SL to locked profit @ ${new_sl:.4f}")
-                    else:
-                        new_sl = entry - trail_dist
-                        if new_sl < trade["sl_price"]:
-                            trade["sl_price"] = new_sl
-                            logger.info(f"Moved {symbol} SL to locked profit @ ${new_sl:.4f}")
-
-                # Time-based Breakeven
-                if trade["scan_count"] >= BREAKEVEN_AFTER_SCANS and pnl_pct > 0.3:
-                    if direction == BUY and trade["sl_price"] < entry:
-                        trade["sl_price"] = entry
-                        logger.info(f"Moved {symbol} SL to breakeven @ ${entry:.4f}")
-                    elif direction == SELL and trade["sl_price"] > entry:
-                        trade["sl_price"] = entry
-                        logger.info(f"Moved {symbol} SL to breakeven @ ${entry:.4f}")
+                            logger.info(
+                                f"📈 Trailing {symbol} SL → ${new_sl:.4f} "
+                                f"(PnL: {pnl_pct:+.2f}% | Trigger: {trail_trigger_pct:.2f}%)"
+                            )
 
             if not closed and trade["scan_count"] >= MAX_HOLD_SCANS:
                 exit_price = current_price
@@ -599,6 +641,7 @@ class LiveTrader:
         if now.hour == 0 and now.minute < SCAN_INTERVAL_MIN:
             self.daily_pnl = 0.0
             self.daily_start_balance = self.balance
+            self.daily_target_reached = False
             logger.info(f"Daily PnL reset. New starting balance: ${self.balance:.2f}")
 
     def print_status(self):

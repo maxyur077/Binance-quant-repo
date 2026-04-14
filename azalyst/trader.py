@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import signal
-import sqlite3
 import time
 import traceback
 from datetime import datetime, timezone
@@ -17,18 +16,21 @@ from azalyst.config import (
     BREAKEVEN_AFTER_SCANS, SCAN_INTERVAL_MIN, CANDLE_TF_MIN,
     PROP_MAX_DRAWDOWN_PCT, PROP_DAILY_LOSS_PCT, SLIPPAGE_BPS,
     BUY, SELL, EXCLUDE_SYMBOLS, MIN_VOLUME_MA, TOP_N_COINS,
-    DATABASE_FILE, MAX_SAME_DIRECTION, HTF_TIMEFRAME, HTF_CANDLE_LIMIT,
+    MAX_SAME_DIRECTION, HTF_TIMEFRAME, HTF_CANDLE_LIMIT,
     HTF_EMA_FAST, HTF_EMA_SLOW,
+    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 )
 from azalyst.logger import logger
 from azalyst.indicators import compute_indicators
 from azalyst.consensus import multi_strategy_scan
 from azalyst.notifications import send_alerts
+from azalyst import db
 
 
 class LiveTrader:
-    def __init__(self, exchange: ccxt.binance, dry_run: bool = False):
+    def __init__(self, exchange: ccxt.binance, user_id: str, dry_run: bool = False):
         self.exchange = exchange
+        self.user_id = user_id
         self.dry_run = dry_run
         self.balance = INITIAL_BALANCE
         self.initial_balance = INITIAL_BALANCE
@@ -47,7 +49,17 @@ class LiveTrader:
         self.daily_target_reached = False
         self._live_prices: Dict[str, float] = {}
 
+        self.config = {
+            "leverage": LEVERAGE,
+            "risk_per_trade": RISK_PER_TRADE,
+            "atr_mult": ATR_MULT,
+            "tp_rr_ratio": TP_RR_RATIO,
+            "telegram_token": TELEGRAM_BOT_TOKEN,
+            "telegram_chat_id": TELEGRAM_CHAT_ID
+        }
+
         self._load_state()
+        self._refresh_config()
 
         signal.signal(signal.SIGINT, self._shutdown_handler)
         signal.signal(signal.SIGTERM, self._shutdown_handler)
@@ -56,103 +68,54 @@ class LiveTrader:
         logger.info(f"Received shutdown signal. Closing {len(self.open_trades)} open trades...")
         self.running = False
 
-    def _init_db(self):
-        try:
-            with sqlite3.connect(DATABASE_FILE) as conn:
-                cur = conn.cursor()
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS trades (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        symbol VARCHAR(50),
-                        direction INT,
-                        entry_price FLOAT,
-                        qty FLOAT,
-                        sl_price FLOAT,
-                        tp_price FLOAT,
-                        entry_time VARCHAR(50),
-                        exit_time VARCHAR(50),
-                        exit_price FLOAT,
-                        pnl_pct FLOAT,
-                        pnl_usd FLOAT,
-                        status VARCHAR(20),
-                        scan_count INT,
-                        max_price FLOAT,
-                        min_price FLOAT,
-                        reason TEXT,
-                        signal VARCHAR(50),
-                        strategies TEXT
-                    )
-                """)
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS equity_log (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        timestamp VARCHAR(50),
-                        balance FLOAT,
-                        open_trades INT,
-                        daily_pnl FLOAT
-                    )
-                """)
-                conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to initialize database: {e}")
-
     def _load_state(self):
-        self._init_db()
         try:
-            with sqlite3.connect(DATABASE_FILE) as conn:
-                conn.row_factory = sqlite3.Row
-                cur = conn.cursor()
-                cur.execute("SELECT * FROM trades")
-                rows = cur.fetchall()
-                for row in rows:
-                    if row["status"] == "open":
-                        symbol = row["symbol"]
-                        self.open_trades[symbol] = {
-                            "id": row["id"],
-                            "symbol": symbol,
-                            "direction": int(row["direction"]),
-                            "entry_price": float(row["entry_price"]),
-                            "qty": float(row["qty"]),
-                            "sl_price": float(row["sl_price"]),
-                            "tp_price": float(row["tp_price"]),
-                            "entry_time": row["entry_time"],
-                            "scan_count": int(row.get("scan_count", 0) or 0),
-                            "max_price": float(row.get("max_price", 0) or 0),
-                            "min_price": float(row.get("min_price", 0) or 0),
-                            "signal": row.get("signal", ""),
-                            "strategies": row.get("strategies", ""),
-                        }
-                    else:
-                        self.closed_trades.append(dict(row))
-            logger.info(f"Loaded {len(self.open_trades)} open trades from database")
+            rows = db.fetch_open_trades(self.user_id)
+            for row in rows:
+                symbol = row["symbol"]
+                self.open_trades[symbol] = {
+                    "id": row["id"],
+                    "symbol": symbol,
+                    "direction": int(row["direction"]),
+                    "entry_price": float(row["entry_price"]),
+                    "qty": float(row["qty"]),
+                    "sl_price": float(row["sl_price"]),
+                    "tp_price": float(row["tp_price"]),
+                    "sl_dist_pct": float(row.get("sl_dist_pct") or 0),
+                    "entry_time": row["entry_time"],
+                    "scan_count": int(row.get("scan_count") or 0),
+                    "max_price": float(row.get("max_price") or 0),
+                    "min_price": float(row.get("min_price") or 0),
+                    "signal": row.get("signal", ""),
+                    "strategies": row.get("strategies", ""),
+                    "atr": float(row.get("atr") or 0),
+                }
+
+            closed_rows = db.fetch_closed_trades(self.user_id)
+            self.closed_trades = closed_rows
+
+            logger.info(f"Loaded {len(self.open_trades)} open trades from Supabase for user {self.user_id}")
         except Exception as e:
             logger.error(f"Failed to load state: {e}")
 
     def _save_trade(self, trade: dict, status: str = "open"):
         try:
-            with sqlite3.connect(DATABASE_FILE) as conn:
-                cur = conn.cursor()
-                if status == "open" and "id" not in trade:
-                    cur.execute("""
-                        INSERT INTO trades (symbol, direction, entry_price, qty, sl_price, tp_price, entry_time,
-                        status, scan_count, max_price, min_price, signal, strategies)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        trade["symbol"], trade["direction"], trade["entry_price"], trade["qty"], trade["sl_price"],
-                        trade["tp_price"], trade["entry_time"], status, trade.get("scan_count", 0),
-                        trade.get("max_price", trade["entry_price"]), trade.get("min_price", trade["entry_price"]),
-                        trade.get("signal", ""), trade.get("strategies", "")
-                    ))
-                    trade["id"] = cur.lastrowid
-                elif status == "closed" and "id" in trade:
-                    cur.execute("""
-                        UPDATE trades SET exit_time = ?, exit_price = ?, pnl_pct = ?, pnl_usd = ?,
-                        status = ?, reason = ? WHERE id = ?
-                    """, (
-                        trade.get("exit_time", ""), trade.get("exit_price", 0.0), trade.get("pnl_pct", 0.0),
-                        trade.get("pnl_usd", 0.0), status, trade.get("reason", ""), trade["id"]
-                    ))
-                conn.commit()
+            if status == "open" and "id" not in trade:
+                result = db.insert_trade(self.user_id, trade)
+                if result:
+                    trade["id"] = result["id"]
+            elif status == "open" and "id" in trade:
+                db.update_trade_sl(self.user_id, trade["id"], trade["sl_price"])
+            elif status == "closed" and "id" in trade:
+                db.close_trade_db(
+                    self.user_id,
+                    trade["id"],
+                    trade.get("exit_time", ""),
+                    trade.get("exit_price", 0.0),
+                    trade.get("pnl_pct", 0.0),
+                    trade.get("pnl_usd", 0.0),
+                    trade.get("reason", "")
+                )
         except Exception as e:
             logger.error(f"Failed to save trade: {e}")
 
@@ -166,13 +129,7 @@ class LiveTrader:
         self.equity_curve.append(point)
 
         try:
-            with sqlite3.connect(DATABASE_FILE) as conn:
-                cur = conn.cursor()
-                cur.execute("""
-                    INSERT INTO equity_log (timestamp, balance, open_trades, daily_pnl)
-                    VALUES (?, ?, ?, ?)
-                """, (point["timestamp"], point["balance"], point["open_trades"], point["daily_pnl"]))
-                conn.commit()
+            db.insert_equity(self.user_id, point)
         except Exception as e:
             logger.error(f"Failed to log equity: {e}")
 
@@ -181,6 +138,51 @@ class LiveTrader:
         self.daily_target_reached = False
         logger.info(f"Daily profit target set to ${target:.2f}")
 
+    def reconfigure(self, dry_run: bool, api_key: str = "", api_secret: str = ""):
+        """Dynamically update trading mode and exchange config"""
+        self.dry_run = dry_run
+        if not dry_run and api_key and api_secret:
+            self.exchange.apiKey = api_key
+            self.exchange.secret = api_secret
+            logger.info(f"Trader reconfigured to LIVE mode for user {self.user_id}")
+        else:
+            self.exchange.secret = ""
+            logger.info(f"Trader reconfigured to DRY RUN mode for user {self.user_id}")
+
+    def _refresh_config(self):
+        """Fetch user-specific config from DB, fallback to defaults"""
+        if not self.user_id:
+            return
+        try:
+            # We fetch all configs for this user
+            # Map common internal keys to DB keys
+            key_map = {
+                "leverage": "leverage",
+                "risk_per_trade": "risk_per_trade",
+                "atr_mult": "atr_mult",
+                "tp_rr_ratio": "tp_rr_ratio",
+                "telegram_token": "telegram_bot_token",
+                "telegram_chat_id": "telegram_chat_id"
+            }
+            for internal_key, db_key in key_map.items():
+                val = db.get_config(self.user_id, db_key, None)
+                if val is not None:
+                    # Convert types if necessary
+                    if internal_key in ["leverage"]:
+                        self.config[internal_key] = int(val)
+                    elif internal_key in ["risk_per_trade", "atr_mult", "tp_rr_ratio"]:
+                        self.config[internal_key] = float(val)
+                    else:
+                        self.config[internal_key] = str(val)
+            
+            # Special case for daily target target
+            target = db.get_config(self.user_id, "daily_profit_target", None)
+            if target:
+                self.daily_profit_target = float(target)
+
+        except Exception as e:
+            logger.error(f"Failed to refresh config: {e}")
+        
     def get_status(self) -> dict:
         current_drawdown = (self.initial_balance - self.balance) / self.initial_balance * 100
         return {
@@ -196,8 +198,10 @@ class LiveTrader:
             "running": self.running,
             "dry_run": self.dry_run,
             "scan_count": self.scan_count,
-            "leverage": LEVERAGE,
-            "risk_per_trade": RISK_PER_TRADE,
+            "leverage": self.config["leverage"],
+            "risk_per_trade": self.config["risk_per_trade"],
+            "tp_rr_ratio": self.config["tp_rr_ratio"],
+            "atr_mult": self.config["atr_mult"],
             "prop_max_dd": PROP_MAX_DRAWDOWN_PCT,
             "prop_daily_loss": PROP_DAILY_LOSS_PCT,
             "daily_profit_target": round(self.daily_profit_target, 2),
@@ -224,6 +228,7 @@ class LiveTrader:
                 "pnl_usd": round(pnl_usd, 2),
                 "sl_price": round(t["sl_price"], 6),
                 "tp_price": round(t["tp_price"], 6),
+                "sl_dist_pct": round(t.get("sl_dist_pct", 0), 4),
                 "qty": round(t["qty"], 6),
                 "entry_time": t["entry_time"],
                 "scan_count": t["scan_count"],
@@ -255,9 +260,12 @@ class LiveTrader:
                 "direction": "LONG" if str(t.get("direction", "1")) == "1" else "SHORT",
                 "entry_price": t.get("entry_price", ""),
                 "exit_price": t.get("exit_price", ""),
+                "sl_price": t.get("sl_price", ""),
+                "tp_price": t.get("tp_price", ""),
                 "pnl_pct": t.get("pnl_pct", ""),
                 "pnl_usd": t.get("pnl_usd", ""),
                 "reason": t.get("reason", ""),
+                "strategies": t.get("strategies", ""),
                 "entry_time": t.get("entry_time", ""),
                 "exit_time": t.get("exit_time", ""),
             })
@@ -284,8 +292,7 @@ class LiveTrader:
                 filtered.append(s)
 
         logger.info(f"Found {len(filtered)} active USDT pairs. Fetching volume data...")
-        
-        # Fetch all tickers first, then filter, to avoid hitting dead/delisted symbols individually
+
         all_tickers = self.exchange.fetch_tickers()
 
         volume_ranked = []
@@ -326,9 +333,9 @@ class LiveTrader:
         logger.info(f"Scan Interval: {SCAN_INTERVAL_MIN} min")
         logger.info(f"Candle TF: {CANDLE_TF_MIN} min")
         logger.info("=" * 80)
-        
+
         self._refresh_top_coins()
-        
+
         send_alerts(
             "🚀 **TRADER STARTED**",
             f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}\n"
@@ -389,9 +396,8 @@ class LiveTrader:
             if symbol in self.open_trades:
                 continue
 
-            # Correlation guard
             same_direction_trades = len([t for t in self.open_trades.values() if t["direction"] == BUY])
-            if (same_direction_trades >= MAX_SAME_DIRECTION or 
+            if (same_direction_trades >= MAX_SAME_DIRECTION or
                len(self.open_trades) - same_direction_trades >= MAX_SAME_DIRECTION):
                logger.info(f"Correlation limit reached. Skipping remaining symbols.")
                break
@@ -404,7 +410,6 @@ class LiveTrader:
             if df["atr_14"].iloc[-1] == 0 or np.isnan(df["atr_14"].iloc[-1]):
                 continue
 
-            # Fetch Higher-Timeframe Data
             htf_df = self.fetch_ohlcv(symbol, HTF_TIMEFRAME, limit=HTF_CANDLE_LIMIT)
             if not htf_df.empty:
                 htf_df["ema_50"] = htf_df["close"].ewm(span=HTF_EMA_FAST, adjust=False).mean()
@@ -429,18 +434,17 @@ class LiveTrader:
         else:
             fill_price = price * (1 - slippage_pct)
 
-        risk_usd = self.balance * RISK_PER_TRADE * LEVERAGE
+        risk_usd = self.balance * self.config["risk_per_trade"] * self.config["leverage"]
         qty = risk_usd / fill_price
 
-        sl_dist = max(min(ATR_MULT * atr, fill_price * SL_MAX_PCT), fill_price * SL_MIN_PCT)
+        sl_dist = max(min(self.config["atr_mult"] * atr, fill_price * SL_MAX_PCT), fill_price * SL_MIN_PCT)
         if direction == BUY:
             sl_price = fill_price - sl_dist
-            tp_price = fill_price + sl_dist * TP_RR_RATIO
+            tp_price = fill_price + sl_dist * self.config["tp_rr_ratio"]
         else:
             sl_price = fill_price + sl_dist
-            tp_price = fill_price - sl_dist * TP_RR_RATIO
+            tp_price = fill_price - sl_dist * self.config["tp_rr_ratio"]
 
-        # Calculate SL distance as % of entry - used for dynamic trailing trigger
         sl_dist_pct = sl_dist / fill_price * 100
 
         trade = {
@@ -485,7 +489,9 @@ class LiveTrader:
             f"Entry: ${fill_price:.4f}\n"
             f"SL: ${sl_price:.4f} | TP: ${tp_price:.4f}\n"
             f"Signal: {sig['signal']}\n"
-            f"Strategies: {', '.join(sig.get('strategies', []))}"
+            f"Strategies: {', '.join(sig.get('strategies', []))}",
+            telegram_token=self.config.get("telegram_token"),
+            telegram_chat_id=self.config.get("telegram_chat_id")
         )
 
     def manage_open_trades(self, main_scan: bool = True):
@@ -540,44 +546,35 @@ class LiveTrader:
 
             if not closed:
                 pnl_pct = (current_price - entry) / entry * 100 if direction == BUY else (entry - current_price) / entry * 100
-                
+
                 try:
                     current_atr = trade.get("atr", current_price * 0.01)
                 except:
                     current_atr = current_price * 0.01
 
-                # ─── Dynamic Trailing Stop Logic ───
-                # Trigger threshold = same as the SL distance set at entry.
-                # e.g. if SL was 1.5% away → trail activates at +1.5% profit
-                #      if SL was 3.0% away → trail activates at +3.0% profit
-                # This keeps the trailing proportional to TP_RR_RATIO automatically.
-                # Trail distance = 1.5% of current price or 1x ATR, whichever is larger.
-
-                sl_dist_pct = trade.get("sl_dist_pct", 2.0)  # fallback 2.0 for legacy trades
-                trail_trigger_pct = sl_dist_pct  # activate trailing when profit >= SL distance
+                sl_dist_pct = trade.get("sl_dist_pct", 2.0)
+                trail_trigger_pct = sl_dist_pct
 
                 if pnl_pct >= trail_trigger_pct:
-                    trail_dist = max(current_atr, current_price * 0.015)
+                    trail_dist = current_price * 0.008
                     if direction == BUY:
                         new_sl = current_price - trail_dist
-                        # Ensure SL is at least at entry (never go below breakeven)
                         new_sl = max(new_sl, entry)
                         if new_sl > trade["sl_price"]:
                             trade["sl_price"] = new_sl
                             logger.info(
                                 f"📈 Trailing {symbol} SL → ${new_sl:.4f} "
-                                f"(PnL: {pnl_pct:+.2f}% | Trigger: {trail_trigger_pct:.2f}%)"
+                                f"(Price: ${current_price:.4f} | PnL: {pnl_pct:+.2f}%)"
                             )
                             self._save_trade(trade, "open")
                     else:
                         new_sl = current_price + trail_dist
-                        # Ensure SL is at most at entry (never go above breakeven for shorts)
                         new_sl = min(new_sl, entry)
                         if new_sl < trade["sl_price"]:
                             trade["sl_price"] = new_sl
                             logger.info(
                                 f"📈 Trailing {symbol} SL → ${new_sl:.4f} "
-                                f"(PnL: {pnl_pct:+.2f}% | Trigger: {trail_trigger_pct:.2f}%)"
+                                f"(Price: ${current_price:.4f} | PnL: {pnl_pct:+.2f}%)"
                             )
                             self._save_trade(trade, "open")
 
@@ -694,6 +691,8 @@ class LiveTrader:
 
             while self.running:
                 try:
+                    self._refresh_config()
+                    now = datetime.now(timezone.utc)
                     if time.time() - self.last_symbol_refresh_time >= 4 * 3600:
                         self._refresh_top_coins()
 

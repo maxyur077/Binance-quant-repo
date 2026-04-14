@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Azalyst Alpha X{% endblock %}</title>
+    <meta name="description" content="Real-time multi-strategy crypto trading dashboard">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        surface: { 900: '#0a0e17', 800: '#111827', 700: '#151c2c', 600: '#1a2236' },
+                        accent: { cyan: '#00f0ff', purple: '#8b5cf6', blue: '#3b82f6' },
+                        profit: '#10b981',
+                        loss: '#ef4444',
+                        warn: '#f59e0b',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+                    },
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="/static/css/custom.css">
+</head>
+<body class="bg-surface-900 text-gray-200 min-h-screen antialiased font-sans overflow-x-hidden">
+    <div class="bg-gradient-radial pointer-events-none fixed inset-0 z-0"></div>
+    <div class="relative z-10 max-w-[1520px] mx-auto px-6 pb-6">
+        {% block content %}{% endblock %}
+    </div>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

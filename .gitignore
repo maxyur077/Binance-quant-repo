@@ -2,6 +2,6 @@
 __pycache__/
 *.pyc
 data/
-live_trader.log
-.idea/
-.vscode/
+*.db
+.venv/
+venv/

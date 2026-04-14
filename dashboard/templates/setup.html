@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Azalyst Alpha X — Setup{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-center min-h-screen -mt-6">
+    <div class="w-full max-w-2xl">
+        <div class="text-center mb-10">
+            <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-accent-cyan/5 border border-accent-cyan/20 mb-6">
+                <svg width="32" height="32" viewBox="0 0 28 28" fill="none">
+                    <path d="M14 2L26 8V20L14 26L2 20V8L14 2Z" stroke="url(#lg)" stroke-width="2" fill="none"/>
+                    <path d="M14 8L20 11V17L14 20L8 17V11L14 8Z" fill="url(#lg)"/>
+                    <defs><linearGradient id="lg" x1="2" y1="2" x2="26" y2="26"><stop stop-color="#00F0FF"/><stop offset="1" stop-color="#8B5CF6"/></linearGradient></defs>
+                </svg>
+            </div>
+            <h1 class="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-accent-cyan to-accent-purple bg-clip-text text-transparent">
+                AZALYST ALPHA X
+            </h1>
+            <p class="text-gray-500 text-sm mt-2 tracking-wide">Multi-Strategy Live Trader</p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-5" id="modeCards">
+            <button id="dryRunCard" onclick="selectMode('dry_run')"
+                class="group relative bg-surface-700 border border-white/[0.06] rounded-2xl p-8 text-left transition-all duration-300 hover:border-warn/30 hover:bg-surface-600 hover:-translate-y-1 hover:shadow-[0_8px_30px_rgba(245,158,11,0.08)] focus:outline-none">
+                <div class="w-12 h-12 rounded-xl bg-warn/10 border border-warn/20 flex items-center justify-center mb-5">
+                    <span class="text-2xl">🧪</span>
+                </div>
+                <h2 class="text-lg font-bold text-gray-100 mb-2">Dry Run Mode</h2>
+                <p class="text-sm text-gray-500 leading-relaxed">Paper trading with simulated orders. No API keys required. Perfect for testing strategies.</p>
+                <div class="absolute top-4 right-4 w-5 h-5 rounded-full border-2 border-gray-600 group-hover:border-warn transition-colors" id="dryRadio"></div>
+            </button>
+
+            <button id="liveCard" onclick="selectMode('live')"
+                class="group relative bg-surface-700 border border-white/[0.06] rounded-2xl p-8 text-left transition-all duration-300 hover:border-profit/30 hover:bg-surface-600 hover:-translate-y-1 hover:shadow-[0_8px_30px_rgba(16,185,129,0.08)] focus:outline-none">
+                <div class="w-12 h-12 rounded-xl bg-profit/10 border border-profit/20 flex items-center justify-center mb-5">
+                    <span class="text-2xl">⚡</span>
+                </div>
+                <h2 class="text-lg font-bold text-gray-100 mb-2">Live Trading</h2>
+                <p class="text-sm text-gray-500 leading-relaxed">Execute real trades on Binance Futures. Requires API key and secret.</p>
+                <div class="absolute top-4 right-4 w-5 h-5 rounded-full border-2 border-gray-600 group-hover:border-profit transition-colors" id="liveRadio"></div>
+            </button>
+        </div>
+
+        <div id="apiKeySection" class="hidden mt-6 bg-surface-700 border border-white/[0.06] rounded-2xl p-8 animate-fadeIn">
+            <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-5">Binance API Credentials</h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">API Key</label>
+                    <input type="text" id="apiKeyInput" placeholder="Enter your Binance API key"
+                        class="w-full bg-surface-800 border border-white/[0.06] rounded-xl px-4 py-3 font-mono text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-accent-purple/50 focus:ring-2 focus:ring-accent-purple/10 transition-all">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">API Secret</label>
+                    <input type="password" id="apiSecretInput" placeholder="Enter your Binance API secret"
+                        class="w-full bg-surface-800 border border-white/[0.06] rounded-xl px-4 py-3 font-mono text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-accent-purple/50 focus:ring-2 focus:ring-accent-purple/10 transition-all">
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-8 flex justify-center">
+            <button id="startBtn" onclick="submitSetup()" disabled
+                class="px-10 py-3.5 rounded-xl font-semibold text-sm tracking-wide transition-all duration-300 bg-gradient-to-r from-accent-purple to-accent-blue text-white disabled:opacity-30 disabled:cursor-not-allowed hover:shadow-[0_6px_24px_rgba(139,92,246,0.3)] hover:-translate-y-0.5">
+                Start Trading
+            </button>
+        </div>
+
+        <p id="setupError" class="text-center text-loss text-xs mt-4 hidden"></p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/setup.js"></script>
+{% endblock %}

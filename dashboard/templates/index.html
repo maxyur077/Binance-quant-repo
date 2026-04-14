@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}Azalyst Alpha X — Live Trading Dashboard{% endblock %}
+
+{% block content %}
+<header class="flex items-center justify-between py-5 border-b border-white/[0.06] mb-6">
+    <div class="flex items-center gap-3.5">
+        <div class="w-[42px] h-[42px] flex items-center justify-center bg-accent-cyan/[0.06] border border-accent-cyan/[0.12] rounded-[10px]">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                <path d="M14 2L26 8V20L14 26L2 20V8L14 2Z" stroke="url(#logoGrad)" stroke-width="2" fill="none"/>
+                <path d="M14 8L20 11V17L14 20L8 17V11L14 8Z" fill="url(#logoGrad)"/>
+                <defs><linearGradient id="logoGrad" x1="2" y1="2" x2="26" y2="26"><stop stop-color="#00F0FF"/><stop offset="1" stop-color="#8B5CF6"/></linearGradient></defs>
+            </svg>
+        </div>
+        <div class="flex flex-col">
+            <span class="text-[1.15rem] font-extrabold tracking-[1.5px] bg-gradient-to-r from-accent-cyan to-accent-purple bg-clip-text text-transparent">AZALYST ALPHA X</span>
+            <span class="text-[0.78rem] text-gray-500 tracking-wide">Multi-Strategy Live Trader</span>
+        </div>
+    </div>
+    <div class="flex items-center gap-5">
+        <button class="text-xs text-gray-400 hover:text-white transition-colors underline" onclick="logoutUser()">Logout</button>
+        <button class="flex items-center gap-1.5 bg-white/[0.04] border border-white/[0.08] rounded-full px-4 py-[7px] text-[0.75rem] font-semibold tracking-wide text-gray-300 cursor-pointer transition-all hover:bg-white/[0.08] hover:text-white hover:-translate-y-px" id="openConfigModal">
+            ⚙️ Strategy & Alerts
+        </button>
+        <button class="flex items-center gap-1.5 bg-gradient-to-r from-accent-purple/[0.15] to-accent-cyan/[0.10] border border-accent-purple/30 rounded-full px-4 py-[7px] text-[0.75rem] font-semibold tracking-wide text-accent-purple cursor-pointer transition-all hover:from-accent-purple/25 hover:to-accent-cyan/[0.18] hover:border-accent-purple/50 hover:-translate-y-px hover:shadow-[0_4px_16px_rgba(139,92,246,0.2)]" id="openTargetModal">
+            🎯 <span id="targetBtnLabel">Set Target</span>
+        </button>
+        <div class="flex items-center gap-2 bg-surface-700 border border-white/[0.06] rounded-full px-4 py-1.5 text-[0.75rem] font-semibold tracking-wider text-gray-400 cursor-pointer hover:bg-surface-600 transition-all hover:border-white/20" id="openSettingsModal">
+            <span class="w-2 h-2 rounded-full bg-gray-500" id="statusDot"></span>
+            <span id="modeLabel">CONNECTING...</span>
+        </div>
+        <div class="flex flex-col items-end">
+            <span class="text-[0.68rem] text-gray-500 uppercase tracking-wider font-medium">Next Scan</span>
+            <span class="font-mono text-[1.1rem] font-semibold text-accent-cyan" id="nextScanCountdown">--:--</span>
+        </div>
+    </div>
+</header>
+
+<section class="grid grid-cols-8 gap-3 mb-5" id="metricsRow">
+    <div class="metric-card"><span class="metric-label">Balance</span><span class="metric-value" id="metricBalance">$--</span></div>
+    <div class="metric-card"><span class="metric-label">Daily P&L</span><span class="metric-value" id="metricDailyPnl">$--</span></div>
+    <div class="metric-card"><span class="metric-label">Drawdown</span><span class="metric-value" id="metricDrawdown">--%</span></div>
+    <div class="metric-card"><span class="metric-label">Win Rate</span><span class="metric-value" id="metricWinRate">--%</span></div>
+    <div class="metric-card"><span class="metric-label">Open Trades</span><span class="metric-value" id="metricOpenCount">--/--</span></div>
+    <div class="metric-card"><span class="metric-label">Total Closed</span><span class="metric-value" id="metricClosedCount">--</span></div>
+    <div class="metric-card"><span class="metric-label">Leverage</span><span class="metric-value" id="metricLeverage">--x</span></div>
+    <div class="metric-card"><span class="metric-label">Risk/Trade</span><span class="metric-value" id="metricRisk">--%</span></div>
+</section>
+
+<section class="grid grid-cols-2 gap-4 mb-6" id="propFirmBar">
+    <div class="bg-surface-700 border border-white/[0.06] rounded-[10px] px-[18px] py-3.5">
+        <div class="flex justify-between items-center mb-2.5">
+            <span class="text-[0.75rem] text-gray-400 font-medium uppercase tracking-wide">Max Drawdown Limit</span>
+            <span class="font-mono text-[0.8rem] text-gray-200 font-semibold" id="propDdValue">0% / 50%</span>
+        </div>
+        <div class="h-1.5 bg-white/[0.04] rounded-full overflow-hidden"><div class="h-full rounded-full bg-gradient-to-r from-profit via-warn to-loss transition-all duration-700" id="propDdFill" style="width:0%"></div></div>
+    </div>
+    <div class="bg-surface-700 border border-white/[0.06] rounded-[10px] px-[18px] py-3.5">
+        <div class="flex justify-between items-center mb-2.5">
+            <span class="text-[0.75rem] text-gray-400 font-medium uppercase tracking-wide">Daily Loss Limit</span>
+            <span class="font-mono text-[0.8rem] text-gray-200 font-semibold" id="propDailyValue">$0 / $25</span>
+        </div>
+        <div class="h-1.5 bg-white/[0.04] rounded-full overflow-hidden"><div class="h-full rounded-full bg-gradient-to-r from-accent-blue via-accent-purple to-loss transition-all duration-700" id="propDailyFill" style="width:0%"></div></div>
+    </div>
+    <div class="bg-gradient-to-r from-surface-700 to-accent-purple/[0.04] border border-accent-purple/20 rounded-[10px] px-[18px] py-3.5 col-span-2 hidden" id="dailyTargetBar">
+        <div class="flex justify-between items-center mb-2.5">
+            <span class="text-[0.75rem] text-gray-400 font-medium uppercase tracking-wide">🎯 Daily Profit Target</span>
+            <span class="font-mono text-[0.8rem] text-gray-200 font-semibold" id="propTargetValue">$0 / $0</span>
+        </div>
+        <div class="h-1.5 bg-white/[0.04] rounded-full overflow-hidden"><div class="h-full rounded-full bg-gradient-to-r from-accent-purple to-profit transition-all duration-700" id="propTargetFill" style="width:0%"></div></div>
+    </div>
+</section>
+
+<section class="grid grid-cols-[1.6fr_1fr] gap-5 mb-5">
+    <div class="panel">
+        <div class="panel-header">
+            <h2 class="text-[0.88rem] font-bold tracking-wide">Open Positions</h2>
+            <span class="badge" id="openBadge">0</span>
+        </div>
+        <div class="table-wrap">
+            <table id="openTradesTable">
+                <thead><tr>
+                    <th>Symbol</th><th>Side</th><th>Entry</th><th>Live Price</th><th>P&L</th><th>Stop Loss</th><th>Take Profit</th><th>Strategies</th><th>Hold</th><th>Action</th>
+                </tr></thead>
+                <tbody id="openTradesBody"><tr class="empty-row"><td colspan="10">No open positions</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+    <div class="panel">
+        <div class="panel-header"><h2 class="text-[0.88rem] font-bold tracking-wide">Equity Curve</h2></div>
+        <div class="relative p-4 h-[340px]">
+            <canvas id="equityChart" class="w-full h-full"></canvas>
+            <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-gray-500 text-sm italic" id="chartEmpty">Equity data will appear after first scan</div>
+        </div>
+    </div>
+</section>
+
+<section class="mb-5">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="flex items-center gap-3">
+                <h2 class="text-[0.88rem] font-bold tracking-wide">Trade History</h2>
+                <span class="badge" id="closedBadge">0</span>
+            </div>
+            <button class="flex items-center gap-1.5 border border-accent-cyan/30 rounded-full px-3 py-1 text-[0.7rem] font-semibold text-accent-cyan bg-accent-cyan/[0.05] hover:bg-accent-cyan/[0.12] transition-all cursor-pointer" id="openCalendarModal">📅 Calendar</button>
+        </div>
+        <div class="table-wrap max-h-[340px]">
+            <table id="closedTradesTable">
+                <thead><tr>
+                    <th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>Stop Loss</th><th>Take Profit</th><th>P&L %</th><th>P&L $</th><th>Reason</th><th>Strategies</th><th>Time</th>
+                </tr></thead>
+                <tbody id="closedTradesBody"><tr class="empty-row"><td colspan="11">No closed trades yet</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<footer class="flex justify-between items-center py-3.5 border-t border-white/[0.06] text-[0.72rem] text-gray-500">
+    <span>Azalyst Alpha X v3.0.0</span>
+    <span id="lastUpdate">Last update: --</span>
+</footer>
+
+<div class="modal-overlay" id="targetModalOverlay">
+    <div class="modal-card">
+        <div class="flex items-center justify-between px-6 py-5 border-b border-white/[0.06]">
+            <h3 class="text-base font-bold">🎯 Set Daily Profit Target</h3>
+            <button class="text-gray-500 text-xl hover:text-gray-200 transition-colors px-2 py-1 rounded" id="closeTargetModal">&times;</button>
+        </div>
+        <div class="p-6">
+            <p class="text-sm text-gray-400 leading-relaxed mb-5">Set the dollar amount you want to achieve today. The bot will stop opening new trades once this target is reached.</p>
+            <div class="mb-5">
+                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Profit Target ($)</label>
+                <input type="number" id="dailyTargetInput" placeholder="e.g. 5.00" min="0" step="0.01"
+                    class="w-full bg-surface-800 border border-white/[0.06] rounded-[10px] px-4 py-3 font-mono text-lg font-semibold text-gray-200 placeholder-gray-600 focus:outline-none focus:border-accent-purple/50 focus:ring-2 focus:ring-accent-purple/10 transition-all">
+            </div>
+            <div class="flex justify-between items-center bg-surface-800 rounded-[10px] px-4 py-3">
+                <span class="text-sm text-gray-400 font-medium">Today's Profit:</span>
+                <span class="font-mono text-base font-bold" id="modalCurrentPnl">$0.00</span>
+            </div>
+        </div>
+        <div class="flex gap-3 px-6 py-4 border-t border-white/[0.06]">
+            <button class="flex-1 py-2.5 rounded-[10px] text-sm font-semibold bg-white/[0.04] border border-white/[0.06] text-gray-400 hover:bg-white/[0.08] hover:text-gray-200 transition-all cursor-pointer" id="cancelTarget">Cancel</button>
+            <button class="flex-1 py-2.5 rounded-[10px] text-sm font-semibold bg-gradient-to-r from-accent-purple to-accent-blue text-white border-none hover:-translate-y-px hover:shadow-[0_4px_20px_rgba(139,92,246,0.35)] transition-all cursor-pointer" id="saveTarget">Set Target</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="calendarModalOverlay">
+    <div class="modal-card w-[460px]">
+        <div class="flex items-center justify-between px-6 py-5 border-b border-white/[0.06]">
+            <h3 class="text-base font-bold" id="calendarMonthTitle">🗓️ Monthly Performance</h3>
+            <button class="text-gray-500 text-xl hover:text-gray-200 transition-colors px-2 py-1 rounded" id="closeCalendarModal">&times;</button>
+        </div>
+        <div class="p-6">
+            <div class="grid grid-cols-3 gap-3 mb-5">
+                <div class="bg-surface-800 border border-white/[0.06] rounded-[10px] p-2.5 text-center">
+                    <span class="text-[0.65rem] text-gray-500 uppercase tracking-wider font-semibold">Monthly P&L</span>
+                    <h4 class="mt-1 text-lg font-mono font-bold" id="calMonthlyPnl">$0.00</h4>
+                </div>
+                <div class="bg-surface-800 border border-white/[0.06] rounded-[10px] p-2.5 text-center">
+                    <span class="text-[0.65rem] text-gray-500 uppercase tracking-wider font-semibold">Win Rate</span>
+                    <h4 class="mt-1 text-lg font-mono font-bold" id="calWinRate">0%</h4>
+                </div>
+                <div class="bg-surface-800 border border-white/[0.06] rounded-[10px] p-2.5 text-center">
+                    <span class="text-[0.65rem] text-gray-500 uppercase tracking-wider font-semibold">Total Trades</span>
+                    <h4 class="mt-1 text-lg font-mono font-bold" id="calTotalTrades">0</h4>
+                </div>
+            </div>
+            <div class="grid grid-cols-7 gap-1.5" id="calendarGrid">
+                <div class="cal-label">Sun</div><div class="cal-label">Mon</div><div class="cal-label">Tue</div><div class="cal-label">Wed</div><div class="cal-label">Thu</div><div class="cal-label">Fri</div><div class="cal-label">Sat</div>
+            </div>
+        </div>
+        <div class="flex justify-end px-6 py-4 border-t border-white/[0.06]">
+            <button class="px-6 py-2 rounded-[10px] text-sm font-semibold bg-white/[0.04] border border-white/[0.06] text-gray-400 hover:bg-white/[0.08] hover:text-gray-200 transition-all cursor-pointer" id="closeCalendarBtn">Close</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="settingsModalOverlay">
+    <div class="modal-card">
+        <div class="flex items-center justify-between px-6 py-5 border-b border-white/[0.06]">
+            <h3 class="text-base font-bold">⚙️ Trading Settings</h3>
+            <button class="text-gray-500 text-xl hover:text-gray-200 transition-colors px-2 py-1 rounded" id="closeSettingsModal">&times;</button>
+        </div>
+        <div class="p-6">
+            <div class="mb-5">
+                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Trading Mode</label>
+                <div class="grid grid-cols-2 gap-3">
+                    <button id="setModeDry" class="py-2.5 rounded-[10px] text-sm font-semibold border border-white/[0.12] transition-all cursor-pointer bg-white/[0.04] text-gray-400" onclick="selectMode('dry_run')">Dry Run</button>
+                    <button id="setModeLive" class="py-2.5 rounded-[10px] text-sm font-semibold border border-white/[0.12] transition-all cursor-pointer bg-white/[0.04] text-gray-400" onclick="selectMode('live')">Live</button>
+                </div>
+                <input type="hidden" id="selectedMode" value="dry_run">
+            </div>
+            <div id="apiSettingsArea" class="hidden animate-fadeIn space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Binance API Key</label>
+                    <div class="relative">
+                        <input type="password" id="settingsApiKey" placeholder="Enter API Key" class="w-full bg-surface-800 border border-white/[0.06] rounded-[10px] px-4 py-2.5 font-mono text-sm text-gray-200 focus:outline-none focus:border-accent-cyan/50 transition-all pr-10">
+                        <button type="button" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300" onclick="togglePassword('settingsApiKey')">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Binance API Secret</label>
+                    <div class="relative">
+                        <input type="password" id="settingsApiSecret" placeholder="Enter API Secret" class="w-full bg-surface-800 border border-white/[0.06] rounded-[10px] px-4 py-2.5 font-mono text-sm text-gray-200 focus:outline-none focus:border-accent-cyan/50 transition-all pr-10">
+                        <button type="button" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300" onclick="togglePassword('settingsApiSecret')">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <p class="text-[0.68rem] text-loss mt-4 hidden" id="settingsError"></p>
+        </div>
+        <div class="flex gap-3 px-6 py-4 border-t border-white/[0.06]">
+            <button class="flex-1 py-2.5 rounded-[10px] text-sm font-semibold bg-white/[0.04] border border-white/[0.06] text-gray-400 hover:bg-white/[0.08] hover:text-gray-200 transition-all cursor-pointer" id="cancelSettings">Cancel</button>
+            <button class="flex-1 py-2.5 rounded-[10px] text-sm font-semibold bg-gradient-to-r from-accent-cyan to-accent-blue text-white border-none hover:-translate-y-px hover:shadow-[0_4px_20px_rgba(0,240,255,0.25)] transition-all cursor-pointer" id="saveSettings">Apply Changes</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="configModalOverlay">
+    <div class="modal-card w-[520px]">
+        <div class="flex items-center justify-between px-6 py-5 border-b border-white/[0.06]">
+            <h3 class="text-base font-bold">🛠️ Strategy & Alert Configuration</h3>
+            <button class="text-gray-500 text-xl hover:text-gray-200 transition-colors px-2 py-1 rounded" id="closeConfigModal">&times;</button>
+        </div>
+        <div class="p-6 max-h-[70vh] overflow-y-auto">
+            <!-- Strategy Params -->
+            <div class="mb-8">
+                <h4 class="text-[0.65rem] text-accent-cyan uppercase tracking-widest font-bold mb-4 border-b border-accent-cyan/20 pb-1">Trading Strategy</h4>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[0.68rem] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Take Profit (RR Ratio)</label>
+                        <input type="number" id="cfgTpRatio" step="0.1" class="w-full bg-surface-800 border border-white/[0.06] rounded-[8px] px-3 py-2 text-sm font-mono text-gray-200 focus:outline-none focus:border-accent-cyan/50 transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-[0.68rem] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">ATR SL Multiplier</label>
+                        <input type="number" id="cfgAtrMult" step="0.1" class="w-full bg-surface-800 border border-white/[0.06] rounded-[8px] px-3 py-2 text-sm font-mono text-gray-200 focus:outline-none focus:border-accent-cyan/50 transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-[0.68rem] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Risk Per Trade (%)</label>
+                        <input type="number" id="cfgRisk" step="0.01" class="w-full bg-surface-800 border border-white/[0.06] rounded-[8px] px-3 py-2 text-sm font-mono text-gray-200 focus:outline-none focus:border-accent-cyan/50 transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-[0.68rem] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Max Leverage</label>
+                        <input type="number" id="cfgLeverage" step="1" class="w-full bg-surface-800 border border-white/[0.06] rounded-[8px] px-3 py-2 text-sm font-mono text-gray-200 focus:outline-none focus:border-accent-cyan/50 transition-all">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Notifications -->
+            <div>
+                <h4 class="text-[0.65rem] text-accent-purple uppercase tracking-widest font-bold mb-4 border-b border-accent-purple/20 pb-1">Notification Alerts</h4>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-[0.68rem] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Telegram Bot Token</label>
+                        <div class="relative">
+                            <input type="password" id="cfgTgToken" placeholder=" " class="w-full bg-surface-800 border border-white/[0.06] rounded-[8px] px-3 py-2 text-xs font-mono text-gray-200 focus:outline-none focus:border-accent-purple/50 transition-all pr-8">
+                            <button type="button" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300" onclick="togglePassword('cfgTgToken')">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-[0.68rem] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Telegram Chat ID</label>
+                        <input type="text" id="cfgTgChat" placeholder=" " class="w-full bg-surface-800 border border-white/[0.06] rounded-[8px] px-3 py-2 text-xs font-mono text-gray-200 focus:outline-none focus:border-accent-purple/50 transition-all">
+                    </div>
+                </div>
+            </div>
+            <p class="text-[0.68rem] text-loss mt-4 hidden" id="configError"></p>
+        </div>
+        <div class="flex gap-3 px-6 py-4 border-t border-white/[0.06]">
+            <button class="flex-1 py-2.5 rounded-[10px] text-sm font-semibold bg-white/[0.04] border border-white/[0.06] text-gray-400 hover:bg-white/[0.08] hover:text-gray-200 transition-all cursor-pointer" id="cancelConfig">Cancel</button>
+            <button class="flex-1 py-2.5 rounded-[10px] text-sm font-semibold bg-gradient-to-r from-accent-purple to-accent-cyan text-white border-none hover:-translate-y-px hover:shadow-[0_4px_20px_rgba(139,92,246,0.35)] transition-all cursor-pointer" id="saveConfig">Save Strategy</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/api.js"></script>
+<script src="/static/js/chart.js"></script>
+<script src="/static/js/calendar.js"></script>
+<script src="/static/js/dashboard.js"></script>
+{% endblock %}

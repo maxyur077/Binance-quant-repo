@@ -585,8 +585,11 @@ class LiveTrader:
                 closed = True
 
             if closed:
-                if reason == "STOP_LOSS" and exit_price == entry:
-                    reason = "BREAKEVEN"
+                if reason == "STOP_LOSS":
+                    if exit_price == entry:
+                        reason = "BREAKEVEN"
+                    elif (direction == BUY and exit_price > entry) or (direction == SELL and exit_price < entry):
+                        reason = "TRAILING_STOP"
                 self.close_trade(symbol, exit_price, reason)
 
     def close_trade(self, symbol: str, exit_price: float, reason: str):

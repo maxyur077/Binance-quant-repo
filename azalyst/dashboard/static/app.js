@@ -275,13 +275,24 @@
         tbody.innerHTML = trades.map(function (t) {
             const sideClass = t.direction === "LONG" ? "side-long" : "side-short";
             const pnlCls = pnlClass(t.pnl_pct);
+            const triggerPrice = t.direction === "LONG" 
+                ? t.entry_price * (1 + t.sl_dist_pct / 100) 
+                : t.entry_price * (1 - t.sl_dist_pct / 100);
+            
+            let slSubtext = "";
+            if (t.pnl_pct >= t.sl_dist_pct) {
+                slSubtext = "<div style='font-size:0.65rem; margin-top: 2px; color:var(--accent-cyan); font-weight:bold;'>⚡ Trailing Active</div>";
+            } else {
+                slSubtext = "<div style='font-size:0.65rem; margin-top: 2px; color:var(--text-muted);'>Triggers @ " + formatPrice(triggerPrice) + "</div>";
+            }
+
             return '<tr class="data-flash">' +
                 "<td>" + t.symbol + "</td>" +
                 '<td><span class="' + sideClass + '">' + t.direction + "</span></td>" +
                 "<td>" + formatPrice(t.entry_price) + "</td>" +
                 "<td>" + formatPrice(t.live_price) + "</td>" +
                 '<td class="' + pnlCls + '">' + formatPct(t.pnl_pct) + " (" + formatUSD(t.pnl_usd) + ")</td>" +
-                "<td>" + formatPrice(t.sl_price) + "</td>" +
+                "<td><div>" + formatPrice(t.sl_price) + "</div>" + slSubtext + "</td>" +
                 "<td>" + formatPrice(t.tp_price) + "</td>" +
                 '<td><div class="strategies-tags">' + strategyTags(t.strategies) + "</div></td>" +
                 "<td>" + t.scan_count + "/" + t.max_hold + "</td>" +
@@ -307,7 +318,7 @@
         }
 
         if (trades.length === 0) {
-            tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No closed trades yet</td></tr>';
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No closed trades yet</td></tr>';
             return;
         }
 
@@ -319,9 +330,12 @@
                 '<td><span class="' + sideClass + '">' + t.direction + "</span></td>" +
                 "<td>" + formatPrice(t.entry_price) + "</td>" +
                 "<td>" + formatPrice(t.exit_price) + "</td>" +
+                "<td class='text-muted'>" + (t.sl_price ? formatPrice(t.sl_price) : "--") + "</td>" +
+                "<td class='text-muted'>" + (t.tp_price ? formatPrice(t.tp_price) : "--") + "</td>" +
                 '<td class="' + pnlClass(t.pnl_pct) + '">' + formatPct(t.pnl_pct) + "</td>" +
                 '<td class="' + pnlClass(t.pnl_usd) + '">' + formatUSD(t.pnl_usd) + "</td>" +
                 "<td>" + reasonTag(t.reason) + "</td>" +
+                '<td><div class="strategies-tags">' + strategyTags(t.strategies) + "</div></td>" +
                 "<td>" + timeAgo(t.exit_time) + "</td>" +
                 "</tr>";
         }).join("");

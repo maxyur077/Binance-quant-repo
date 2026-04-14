@@ -11,7 +11,7 @@
     function formatUSD(v) {
         const n = parseFloat(v);
         if (isNaN(n)) return "$--";
-        return (n >= 0 ? "+" : "") + "$" + Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        return (n >= 0 ? "+$" : "-$") + Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
     function formatPrice(v) {
@@ -421,6 +421,121 @@
         ctx.stroke();
     }
 
+    // ─── Monthly Calendar Modal ───
+    function setupCalendarModal() {
+        var overlay = $("calendarModalOverlay");
+        var openBtn = $("openCalendarModal");
+        var closeBtn = $("closeCalendarModal");
+        var closeBtn2 = $("closeCalendarBtn");
+
+        function openModal() {
+            overlay.classList.add("visible");
+            buildCalendar();
+        }
+
+        function closeModal() {
+            overlay.classList.remove("visible");
+        }
+
+        if (openBtn) openBtn.addEventListener("click", openModal);
+        if (closeBtn) closeBtn.addEventListener("click", closeModal);
+        if (closeBtn2) closeBtn2.addEventListener("click", closeModal);
+
+        overlay.addEventListener("click", function (e) {
+            if (e.target === overlay) closeModal();
+        });
+    }
+
+    async function buildCalendar() {
+        const trades = await fetchJSON("/api/trades/closed");
+        if (!trades) return;
+
+        const now = new Date();
+        const currentMonth = now.getMonth();
+        const currentYear = now.getFullYear();
+
+        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        $("calendarMonthTitle").textContent = "🗓️ " + monthNames[currentMonth] + " " + currentYear;
+
+        // Group trades by day for current month
+        let monthlyPnl = 0;
+        let monthlyWins = 0;
+        let monthlyTotal = 0;
+        const dailyPnls = {};
+
+        trades.forEach(t => {
+            const exitDate = new Date(t.exit_time);
+            if (exitDate.getMonth() === currentMonth && exitDate.getFullYear() === currentYear) {
+                const day = exitDate.getDate();
+                const pnl = parseFloat(t.pnl_usd) || 0;
+                
+                if (!dailyPnls[day]) dailyPnls[day] = { pnl: 0, count: 0 };
+                dailyPnls[day].pnl += pnl;
+                dailyPnls[day].count += 1;
+
+                monthlyPnl += pnl;
+                monthlyTotal++;
+                if (pnl > 0) monthlyWins++;
+            }
+        });
+
+        // Update stats
+        $("calMonthlyPnl").textContent = formatUSD(monthlyPnl);
+        $("calMonthlyPnl").className = monthlyPnl >= 0 ? "positive" : "negative";
+
+        $("calTotalTrades").textContent = monthlyTotal;
+
+        let winRate = 0;
+        if (monthlyTotal > 0) winRate = (monthlyWins / monthlyTotal) * 100;
+        $("calWinRate").textContent = winRate.toFixed(1) + "%";
+        $("calWinRate").className = winRate >= 50 ? "positive" : "negative";
+
+        // Build Grid
+        const grid = document.querySelector(".calendar-grid");
+        
+        // Remove existing days (keep headers)
+        const headers = Array.from(grid.querySelectorAll(".cal-day-label"));
+        grid.innerHTML = "";
+        headers.forEach(h => grid.appendChild(h));
+
+        const firstDay = new Date(currentYear, currentMonth, 1).getDay();
+        const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+
+        // Empty slots before 1st of month
+        for (let i = 0; i < firstDay; i++) {
+            const emptyEl = document.createElement("div");
+            emptyEl.className = "cal-day empty";
+            grid.appendChild(emptyEl);
+        }
+
+        // Days of month
+        for (let i = 1; i <= daysInMonth; i++) {
+            const dayEl = document.createElement("div");
+            dayEl.className = "cal-day";
+            
+            const dateNum = document.createElement("span");
+            dateNum.className = "date-num";
+            dateNum.textContent = i;
+            
+            dayEl.appendChild(dateNum);
+
+            if (dailyPnls[i]) {
+                const p = dailyPnls[i].pnl;
+                const pnlEl = document.createElement("span");
+                pnlEl.className = "day-pnl";
+                pnlEl.textContent = formatUSD(p);
+                dayEl.appendChild(pnlEl);
+
+                if (p > 0) dayEl.classList.add("win");
+                else if (p < 0) dayEl.classList.add("loss");
+                else dayEl.classList.add("neutral");
+            }
+
+            grid.appendChild(dayEl);
+        }
+    }
+
+
     async function refresh() {
         await Promise.all([
             updateStatus(),
@@ -431,6 +546,7 @@
     }
 
     setupModal();
+    setupCalendarModal();
     startCountdown();
     refresh();
     setInterval(refresh, REFRESH_MS);

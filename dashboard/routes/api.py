@@ -19,6 +19,9 @@ def _verify_user():
     if _trader_instance and _trader_instance.user_id is None:
         # If trader was waiting for setup, link it to the first user who interacts
         _trader_instance.user_id = user_id
+        # We MUST load their historical state and balance now that we know who they are
+        _trader_instance._load_state()
+        _trader_instance._refresh_config()
     elif _trader_instance and _trader_instance.user_id != user_id:
         return None
     return user_id

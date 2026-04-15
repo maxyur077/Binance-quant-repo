@@ -10,6 +10,42 @@ from azalyst.strategies import MULTI_STRATEGIES
 from azalyst.strategies.htf_filter import get_htf_trend
 
 
+def _check_entry_quality(df: pd.DataFrame, direction: int) -> bool:
+    """
+    Entry confirmation gate — filters out weak signals.
+    Keeps: ADX trending, Volume, RSI guard.
+    Removed: MACD alignment (conflicts with mean-reversion strategies).
+    """
+    last = df.iloc[-1]
+
+    # ── 1. ADX Trending Market Gate ──
+    # Only trade when there's some trend (ADX > 15).
+    # Very low ADX = pure chop where everything whipsaws.
+    adx = last.get("adx", 0)
+    if not np.isnan(adx) and adx < 15:
+        return False
+
+    # ── 2. Volume Confirmation ──
+    # Current bar volume should be reasonable (>= 80% of average).
+    # Blocks ghost moves on zero volume.
+    vol = last.get("volume", 0)
+    vol_ma = last.get("vol_ma_20", 0)
+    if vol_ma > 0 and vol < vol_ma * 0.8:
+        return False
+
+    # ── 3. RSI Zone Guard ──
+    # Don't buy into overbought (RSI > 70) or sell into oversold (RSI < 30).
+    # These are exhaustion zones where reversals are likely.
+    rsi = last.get("rsi_14", 50)
+    if not np.isnan(rsi):
+        if direction == BUY and rsi > 70:
+            return False
+        elif direction == SELL and rsi < 30:
+            return False
+
+    return True
+
+
 def multi_strategy_scan(df: pd.DataFrame, htf_df: Optional[pd.DataFrame] = None) -> Optional[dict]:
     if len(df) < 200:
         return None
@@ -49,6 +85,9 @@ def multi_strategy_scan(df: pd.DataFrame, htf_df: Optional[pd.DataFrame] = None)
         return None
 
     if buy_count >= MIN_AGREEMENT and buy_weight >= WEIGHTED_THRESHOLD and buy_count > sell_count:
+        # ── Entry Quality Gate ──
+        if not _check_entry_quality(df, BUY):
+            return None
         return {
             "direction": BUY,
             "atr": float(atr_val),
@@ -57,6 +96,9 @@ def multi_strategy_scan(df: pd.DataFrame, htf_df: Optional[pd.DataFrame] = None)
         }
 
     if sell_count >= MIN_AGREEMENT and sell_weight >= WEIGHTED_THRESHOLD and sell_count > buy_count:
+        # ── Entry Quality Gate ──
+        if not _check_entry_quality(df, SELL):
+            return None
         return {
             "direction": SELL,
             "atr": float(atr_val),
@@ -65,3 +107,4 @@ def multi_strategy_scan(df: pd.DataFrame, htf_df: Optional[pd.DataFrame] = None)
         }
 
     return None
+

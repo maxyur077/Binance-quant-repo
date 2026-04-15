@@ -8,14 +8,16 @@ def send_telegram_alert(title: str, message: str, bot_token: str = None, chat_id
     token = bot_token or TELEGRAM_BOT_TOKEN
     cid = chat_id or TELEGRAM_CHAT_ID
     if not token or not cid:
+        logger.info(f"Telegram alert skipped — no token/chat_id configured")
         return
     try:
         import requests
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         text = f"{title}\n\n{message}"
-        payload = {"chat_id": cid, "text": text}
-        resp = requests.post(url, json=payload, timeout=5)
+        payload = {"chat_id": cid, "text": text, "parse_mode": "Markdown"}
+        resp = requests.post(url, json=payload, timeout=10)
         resp.raise_for_status()
+        logger.info(f"Telegram alert sent successfully")
     except Exception as e:
         logger.warn(f"Failed to send Telegram alert: {e}")
 

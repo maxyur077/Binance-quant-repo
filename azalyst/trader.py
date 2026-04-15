@@ -556,7 +556,7 @@ class LiveTrader:
                 trail_trigger_pct = sl_dist_pct
 
                 if pnl_pct >= trail_trigger_pct:
-                    trail_dist = current_price * 0.008
+                    trail_dist = current_price * 0.01
                     if direction == BUY:
                         new_sl = current_price - trail_dist
                         new_sl = max(new_sl, entry)
@@ -635,7 +635,9 @@ class LiveTrader:
             f"{emoji} **TRADE CLOSED**",
             f"**{symbol}**\n"
             f"PnL: {pnl_pct:+.2f}% (${pnl_usd:+.2f})\n"
-            f"Reason: {reason}"
+            f"Reason: {reason}",
+            telegram_token=self.config.get("telegram_token"),
+            telegram_chat_id=self.config.get("telegram_chat_id")
         )
 
     def reset_daily_pnl(self):

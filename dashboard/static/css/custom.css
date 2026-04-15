@@ -334,3 +334,135 @@ input:-webkit-autofill:active {
     from { opacity: 1; transform: translateX(0); }
     to { opacity: 0; transform: translateX(20px); }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE RESPONSIVE — Tablet breakpoint
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 1024px) {
+    /* Metrics: 4 columns on tablet */
+    #metricsRow { grid-template-columns: repeat(4, 1fr) !important; }
+
+    /* Panels: stack vertically */
+    section.grid[class*="grid-cols-[1.6fr"] {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* Prop firm bars: stack */
+    #propFirmBar { grid-template-columns: 1fr !important; }
+    #dailyTargetBar { grid-column: span 1 !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE RESPONSIVE — Phone breakpoint
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 640px) {
+    /* Base layout */
+    .relative.z-10 { padding-left: 12px !important; padding-right: 12px !important; }
+
+    /* ── Header ── */
+    header {
+        flex-wrap: wrap !important;
+        gap: 12px !important;
+        padding: 16px 0 !important;
+    }
+
+    /* Logo row */
+    header > div:first-child {
+        width: 100%;
+    }
+
+    /* Buttons row — wrap & fill width */
+    header > div:last-child {
+        width: 100%;
+        flex-wrap: wrap !important;
+        gap: 8px !important;
+        justify-content: flex-start !important;
+    }
+
+    header > div:last-child > * {
+        font-size: 0.68rem !important;
+    }
+
+    /* Hide "Next Scan" label on mobile, keep countdown */
+    header .flex.flex-col.items-end span:first-child {
+        display: none;
+    }
+
+    /* ── Metrics Grid ── */
+    #metricsRow {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 8px !important;
+    }
+
+    .metric-card {
+        padding: 12px 10px;
+    }
+
+    .metric-value {
+        font-size: 0.95rem;
+    }
+
+    /* ── Prop Firm Bars ── */
+    #propFirmBar {
+        grid-template-columns: 1fr !important;
+        gap: 8px !important;
+    }
+    #dailyTargetBar { grid-column: span 1 !important; }
+
+    /* ── Panels ── */
+    section.grid[class*="grid-cols-[1.6fr"] {
+        grid-template-columns: 1fr !important;
+        gap: 12px !important;
+    }
+
+    .panel { border-radius: 10px; }
+    .panel-header { padding: 12px 14px; }
+
+    /* ── Tables ── */
+    .table-wrap {
+        max-height: 320px;
+    }
+
+    th { padding: 8px 10px; font-size: 0.6rem; }
+    td { padding: 8px 10px; font-size: 0.72rem; }
+
+    .exit-btn { padding: 3px 8px; font-size: 0.65rem; }
+
+    .strat-tag { font-size: 0.55rem; padding: 1px 4px; }
+    .reason-tag { font-size: 0.65rem; padding: 2px 6px; }
+
+    /* ── Equity Chart ── */
+    .relative.p-4.h-\[340px\] {
+        height: 220px !important;
+        padding: 8px !important;
+    }
+
+    /* ── Modals ── */
+    .modal-card {
+        width: 95vw !important;
+        max-width: 95vw !important;
+        max-height: 90vh;
+        overflow-y: auto;
+        border-radius: 14px;
+    }
+
+    .modal-card .p-6 { padding: 16px !important; }
+    .modal-card .px-6 { padding-left: 16px !important; padding-right: 16px !important; }
+
+    /* Calendar grid */
+    .cal-day { min-height: 40px; padding: 3px; }
+    .cal-day .date-num { font-size: 0.65rem; }
+    .cal-day .day-pnl { font-size: 0.52rem; }
+
+    /* ── Toast ── */
+    #toast-container { right: 12px; left: 12px; }
+    .toast { min-width: unset; max-width: 100%; font-size: 0.8rem; }
+
+    /* ── Footer ── */
+    footer {
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        text-align: center;
+    }
+}

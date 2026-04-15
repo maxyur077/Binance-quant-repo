@@ -5,3 +5,7 @@ data/
 *.db
 .venv/
 venv/
+backtest.py
+baktest_data/
+result.txt
+*.csv

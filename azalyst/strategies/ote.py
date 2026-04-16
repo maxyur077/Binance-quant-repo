@@ -10,34 +10,49 @@ def signal(df: pd.DataFrame) -> int:
     last = df.iloc[-1]
     prev = df.iloc[-2]
 
-    trend_lookback = df.tail(40)
+    # ── Global Armor Filter ──
+    ema_200 = last.get("ema_200", last["close"])
+    vol_ma = last.get("vol_ma_20", 0)
+    high_conviction_vol = last["volume"] > vol_ma * 1.2 if vol_ma > 0 else True
+
+    # ── Dealing Range & Liquidity Sweep ──
+    lookback_window = 40
+    trend_lookback = df.tail(lookback_window)
     swing_high = trend_lookback["high"].max()
     swing_low = trend_lookback["low"].min()
     
+    # Liquidity Sweep: Has price recently taken out stops?
+    # For a LONG, we want to see price having dipped below a previous support.
+    # We check if the low of any of the last 15 candles was lower than the swing_low of candles 15-40.
+    prior_support = trend_lookback["low"].iloc[:-15].min()
+    liquidity_swept_bull = any(trend_lookback["low"].iloc[-15:] < prior_support)
+    
+    prior_resistance = trend_lookback["high"].iloc[:-15].max()
+    liquidity_swept_bear = any(trend_lookback["high"].iloc[-15:] > prior_resistance)
+
     dealing_range = swing_high - swing_low
     if dealing_range <= 0:
         return HOLD
 
-    # Fibonacci calculation
-    fib_618 = swing_low + 0.618 * dealing_range
-    fib_786 = swing_low + 0.786 * dealing_range
+    # Institutional "Golden Zone" (0.705 - 0.79)
+    fib_ote_deep = swing_low + 0.705 * dealing_range
+    fib_ote_max = swing_low + 0.79 * dealing_range
     
-    # Are we in bullish OTE (retraced down from swing high)?
-    # Assuming macro trend is up if recent price > EMA50
-    if last["close"] > last["ema_50"]:
-        if fib_618 <= last["low"] <= fib_786 or fib_618 <= last["close"] <= fib_786:
+    # Bullish OTE setup
+    if last["close"] > ema_200 and liquidity_swept_bull:
+        if fib_ote_deep <= last["low"] <= fib_ote_max or fib_ote_deep <= last["close"] <= fib_ote_max:
             if is_hammer(last) or is_bullish_engulfing(last, prev):
-                if df["volume"].iloc[-1] > df["vol_ma_20"].iloc[-1]:
+                if high_conviction_vol:
                     return BUY
                     
-    # Are we in bearish OTE (retraced up from swing low)?
-    fib_618_bear = swing_high - 0.618 * dealing_range
-    fib_786_bear = swing_high - 0.786 * dealing_range
+    # Bearish OTE setup
+    fib_ote_deep_bear = swing_high - 0.705 * dealing_range
+    fib_ote_max_bear = swing_high - 0.79 * dealing_range
 
-    if last["close"] < last["ema_50"]:
-        if fib_786_bear <= last["high"] <= fib_618_bear or fib_786_bear <= last["close"] <= fib_618_bear:
+    if last["close"] < ema_200 and liquidity_swept_bear:
+        if fib_ote_max_bear <= last["high"] <= fib_ote_deep_bear or fib_ote_max_bear <= last["close"] <= fib_ote_deep_bear:
             if is_inverted_hammer(last) or is_bearish_engulfing(last, prev):
-                if df["volume"].iloc[-1] > df["vol_ma_20"].iloc[-1]:
+                if high_conviction_vol:
                     return SELL
 
     return HOLD

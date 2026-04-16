@@ -10,6 +10,11 @@ def signal(df: pd.DataFrame) -> int:
     last = df.iloc[-1]
     prev = df.iloc[-2]
 
+    # ── Global Armor Filter ──
+    ema_200 = last.get("ema_200", last["close"])
+    vol_ma = last.get("vol_ma_20", 0)
+    high_conviction_vol = last["volume"] > vol_ma * 1.5 if vol_ma > 0 else True
+
     bullish_engulfing = (last["close"] > last["open"]) and \
                         (prev["close"] < prev["open"]) and \
                         (last["close"] > prev["open"]) and \
@@ -20,10 +25,8 @@ def signal(df: pd.DataFrame) -> int:
     is_hammer = lower_wick > 2 * body_size and last["close"] > last["open"]
 
     if bullish_engulfing or is_hammer:
-        in_demand = last["close"] > df["ema_20"].iloc[-1]
-        volume_ok = last["volume"] > 1.2 * last["vol_ma_20"]
-
-        if in_demand and volume_ok:
+        # Longs only above EMA 200
+        if last["close"] > ema_200 and high_conviction_vol:
             return BUY
 
     bearish_engulfing = (last["close"] < last["open"]) and \
@@ -35,10 +38,8 @@ def signal(df: pd.DataFrame) -> int:
     is_inv_hammer = upper_wick > 2 * body_size and last["close"] < last["open"]
 
     if bearish_engulfing or is_inv_hammer:
-        in_supply = last["close"] < df["ema_20"].iloc[-1]
-        volume_ok = last["volume"] > 1.2 * last["vol_ma_20"]
-
-        if in_supply and volume_ok:
+        # Shorts only below EMA 200
+        if last["close"] < ema_200 and high_conviction_vol:
             return SELL
 
     return HOLD

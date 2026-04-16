@@ -8,21 +8,34 @@ def signal(df: pd.DataFrame) -> int:
         return HOLD
 
     last = df.iloc[-1]
+    prev = df.iloc[-2]
 
-    if last["rsi_9"] < 35:
-        near_bb_lower = (last["close"] - last["bb_lower"]) <= last["atr_14"]
-        below_vwap = last["close"] < last["vwap"]
-        above_ema200 = last["close"] > last["ema_200"]
+    # ── Global Armor Filter ──
+    ema_200 = last.get("ema_200", last["close"])
+    vol_ma = last.get("vol_ma_20", 0)
+    high_conviction_vol = last["volume"] > vol_ma * 1.5 if vol_ma > 0 else True
 
-        if near_bb_lower and below_vwap and above_ema200:
+    # ── RSI Rejection Rule ──
+    if last["rsi_9"] < 30: # More oversold for higher conviction
+        # Must be touching the band
+        at_bb_lower = last["low"] <= last["bb_lower"]
+        below_vwap = last["close"] < last.get("vwap", last["close"])
+        above_ema200 = last["close"] > ema_200
+        
+        # Bullish Rejection candle (e.g. Hammer or recovery)
+        rejection = last["close"] > last["open"] or last["close"] > prev["close"]
+
+        if at_bb_lower and below_vwap and above_ema200 and rejection and high_conviction_vol:
             return BUY
 
-    if last["rsi_9"] > 65:
-        near_bb_upper = (last["bb_upper"] - last["close"]) <= last["atr_14"]
-        above_vwap = last["close"] > last["vwap"]
-        below_ema200 = last["close"] < last["ema_200"]
+    if last["rsi_9"] > 70: # More overbought
+        at_bb_upper = last["high"] >= last["bb_upper"]
+        above_vwap = last["close"] > last.get("vwap", last["close"])
+        below_ema200 = last["close"] < ema_200
+        
+        rejection = last["close"] < last["open"] or last["close"] < prev["close"]
 
-        if near_bb_upper and above_vwap and below_ema200:
+        if at_bb_upper and above_vwap and below_ema200 and rejection and high_conviction_vol:
             return SELL
 
     return HOLD

@@ -36,6 +36,12 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["bb_upper"] = df["bb_mid"] + 2.0 * bb_std
     df["bb_lower"] = df["bb_mid"] - 2.0 * bb_std
 
+    # Bollinger Band 200 (SD 1.5) - Specifically for Trend Rejection
+    df["bb200_mid"] = df["close"].rolling(200).mean()
+    bb200_std = df["close"].rolling(200).std()
+    df["bb200_upper"] = df["bb200_mid"] + 1.5 * bb200_std
+    df["bb200_lower"] = df["bb200_mid"] - 1.5 * bb200_std
+
     fast_ema = df["close"].ewm(span=12, adjust=False).mean()
     slow_ema = df["close"].ewm(span=26, adjust=False).mean()
     df["macd_line"] = fast_ema - slow_ema

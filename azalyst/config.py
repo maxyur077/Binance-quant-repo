@@ -14,15 +14,15 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 INITIAL_BALANCE = 100.0
 LEVERAGE = 10
 RISK_PER_TRADE = 0.10
-ATR_MULT = 1.2
-TP_RR_RATIO = 1.8              # BALANCED config — proven profitable in backtest
+ATR_MULT = 1.4
+TP_RR_RATIO = 1.3              # Optimized for high-winrate scalping hit-rate
 SL_MIN_PCT = 0.01
 SL_MAX_PCT = 0.03
 MAX_OPEN_TRADES = 10
 MAX_HOLD_SCANS = 24
 BREAKEVEN_AFTER_SCANS = 8       # Delayed from 4 to reduce fee-drain breakeven exits
-SCAN_INTERVAL_MIN = 30
-CANDLE_TF_MIN = 15
+SCAN_INTERVAL_MIN = 5
+CANDLE_TF_MIN = 5
 
 PROP_MAX_DRAWDOWN_PCT = 50.0
 PROP_DAILY_LOSS_PCT = 25.0
@@ -30,25 +30,27 @@ PROP_DAILY_LOSS_PCT = 25.0
 TAKER_FEE = 0.0004
 SLIPPAGE_BPS = 1.0
 
-MIN_AGREEMENT = 3
-WEIGHTED_THRESHOLD = 2.5
+MIN_AGREEMENT = 2
+WEIGHTED_THRESHOLD = 2.8       # 'Profitable Volume' setting
 
 BUY = 1
 SELL = -1
 HOLD = 0
 
 MULTI_WEIGHTS = {
-    "bnf": 0.5,             # Almost never fires — reduce weight
-    "nbb": 1.5,             # Marginal performer — slight reduce
-    "kane": 1.0,
-    "umar": 1.2,
-    "zamco": 0.5,           # 11.8% win rate with 3-agree — nerf
-    "jadecap": 1.5,         # Profitable in BALANCED — boost
-    "marci": 1.0,
-    "fvg": 1.0,             # Good but was overvoted at 2.0
-    "ote": 1.2,             # Slight reduce from 1.5
-    "cvd_divergence": 0.5,  # 20.3% win rate — heavily nerf
-    "wyckoff": 2.5,         # BEST strategy (+$25) — boost
+    "bnf": 0.5,
+    "nbb": 1.5,
+    "kane": 0.8,
+    "umar": 1.5,             # WINNER (75% Winrate) - Boost
+    "zamco": 0.5,
+    "jadecap": 0.5,
+    "marci": 1.2,
+    "fvg": 1.8,              # WINNER (66% Winrate) - Boost
+    "ote": 1.0,
+    "cvd_divergence": 0.5,
+    "wyckoff": 1.5,
+    "cbg": 1.2,
+    "bb_trend": 2.0,         # WINNER (75% Winrate) - Boost
 }
 
 HTF_TIMEFRAME = "4h"

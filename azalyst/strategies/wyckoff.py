@@ -14,7 +14,7 @@ def signal(df: pd.DataFrame) -> int:
     ema_200 = last.get("ema_200", last["close"])
     vol_ma = last.get("vol_ma_20", 0)
 
-    # Look back over recent history to establish range (e.g. 50 candles)
+    # Look back over recent history to establish range (e.g. 60 candles)
     range_df = df.iloc[-60:-10]
     support = range_df["low"].min()
     resistance = range_df["high"].max()
@@ -25,8 +25,8 @@ def signal(df: pd.DataFrame) -> int:
     if recent_low < support:
         # We had a breakdown. Are we recovering?
         if last["close"] >= support and last["close"] > ema_200:
-            # High-volume rejection is mandatory for institutional conviction
-            if last["volume"] > vol_ma * 1.5:
+            # Institutional Wyckoff requires a massive 'Volume Climax'
+            if last["volume"] > vol_ma * 2.5:
                 if is_hammer(last) or is_hammer(prev) or is_bullish_engulfing(last, prev):
                     return BUY
 
@@ -34,7 +34,7 @@ def signal(df: pd.DataFrame) -> int:
     recent_high = df["high"].tail(10).max()
     if recent_high > resistance:
         if last["close"] <= resistance and last["close"] < ema_200:
-            if last["volume"] > vol_ma * 1.5:
+            if last["volume"] > vol_ma * 2.5:
                 if is_inverted_hammer(last) or is_inverted_hammer(prev) or is_bearish_engulfing(last, prev):
                     return SELL
 

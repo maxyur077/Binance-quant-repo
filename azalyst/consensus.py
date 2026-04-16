@@ -19,23 +19,28 @@ def _check_entry_quality(df: pd.DataFrame, direction: int) -> bool:
     last = df.iloc[-1]
 
     # ── 1. ADX Trending Market Gate ──
-    # Only trade when there's some trend (ADX > 15).
-    # Very low ADX = pure chop where everything whipsaws.
+    # Only trade when there's definitive trend momentum (ADX > 20).
     adx = last.get("adx", 0)
-    if not np.isnan(adx) and adx < 15:
+    if not np.isnan(adx) and adx < 20:
         return False
 
-    # ── 2. Volume Confirmation ──
-    # Current bar volume should be reasonable (>= 80% of average).
-    # Blocks ghost moves on zero volume.
+    # ── 2. Global Volume Displacement Armor ──
+    # Institutional moves require massive volume relative to the noise.
     vol = last.get("volume", 0)
     vol_ma = last.get("vol_ma_20", 0)
-    if vol_ma > 0 and vol < vol_ma * 0.8:
+    if vol_ma > 0 and vol < vol_ma * 1.5:
         return False
 
-    # ── 3. RSI Zone Guard ──
-    # Don't buy into overbought (RSI > 70) or sell into oversold (RSI < 30).
-    # These are exhaustion zones where reversals are likely.
+    # ── 3. Candle Conviction (Anti-Wick Gate) ──
+    # Longs must close in the top 15% of the range.
+    # Shorts must close in the bottom 15% of the range.
+    conviction = last.get("conviction", 0.5)
+    if direction == BUY and conviction < 0.85:
+        return False
+    if direction == SELL and conviction > 0.15:
+        return False
+
+    # ── 4. RSI Zone Guard ──
     rsi = last.get("rsi_14", 50)
     if not np.isnan(rsi):
         if direction == BUY and rsi > 70:
@@ -64,6 +69,12 @@ def multi_strategy_scan(df: pd.DataFrame, htf_df: Optional[pd.DataFrame] = None)
     for name, func in MULTI_STRATEGIES.items():
         sig = func(df)
         weight = MULTI_WEIGHTS.get(name, 1.0)
+
+        # ── Macro Chop Protection ──
+        # If the market is completely directionless (htf_trend == 0),
+        # trend-continuation strategies will just hit fake-outs. Block them.
+        if htf_trend == 0 and name in ["umar", "bb_trend", "nbb"]:
+            continue
 
         if sig == BUY:
             # HTF Filter: Ignore long signals if macro trend is bearish

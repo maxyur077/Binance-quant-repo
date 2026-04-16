@@ -12,8 +12,9 @@ def signal(df: pd.DataFrame) -> int:
     # ── Global Armor Filter ──
     ema_200 = last.get("ema_200", last["close"])
     vol_ma = last.get("vol_ma_20", 0)
-    # Divergence requires major institutional exhaustion volume
-    high_conviction_vol = last["volume"] > vol_ma * 1.5 if vol_ma > 0 else True
+    atr = last.get("atr_14", 0)
+    # Institutional divergence requires extreme volume exhaustion
+    high_conviction_vol = last["volume"] > vol_ma * 2.0 if vol_ma > 0 else True
 
     # ── Divergence Engine (20-period lookback) ──
     recent_price_lows = df["low"].tail(10).min()
@@ -26,8 +27,9 @@ def signal(df: pd.DataFrame) -> int:
     if recent_price_lows < prev_price_lows and recent_cvd_lows > prev_cvd_lows:
         # RSI must show recent oversold conditions to prove exhaustion
         oversold = df["rsi_14"].tail(10).min() < 35
-        # Shift trigger: Cross back above EMA 9 AND align with EMA 200
-        if last["close"] > last["ema_9"] and last["close"] > ema_200 and oversold:
+        # Must be significantly below EMA 200 (stretched)
+        is_stretched = last["close"] < (ema_200 - 1.0 * atr)
+        if last["close"] > last["ema_9"] and last["close"] > ema_200 and oversold and is_stretched:
             if high_conviction_vol:
                 return BUY
             
@@ -41,7 +43,9 @@ def signal(df: pd.DataFrame) -> int:
     if recent_price_highs > prev_price_highs and recent_cvd_highs < prev_cvd_highs:
         # RSI must show recent overbought conditions to prove exhaustion
         overbought = df["rsi_14"].tail(10).max() > 65
-        if last["close"] < last["ema_9"] and last["close"] < ema_200 and overbought:
+        # Must be significantly above EMA 200 (stretched)
+        is_stretched = last["close"] > (ema_200 + 1.0 * atr)
+        if last["close"] < last["ema_9"] and last["close"] < ema_200 and overbought and is_stretched:
             if high_conviction_vol:
                 return SELL
 

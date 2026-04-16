@@ -97,4 +97,9 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     delta = buy_vol - sell_vol
     df["cvd"] = delta.cumsum()
 
+    # Candle Conviction (normalized 0.0 to 1.0)
+    # Measures 'Body Strength' vs 'Total Range'
+    candle_range = (df["high"] - df["low"]).replace(0.0, 1e-8)
+    df["conviction"] = (df["close"] - df["low"]) / candle_range
+
     return df

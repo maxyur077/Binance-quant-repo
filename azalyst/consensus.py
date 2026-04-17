@@ -13,29 +13,33 @@ from azalyst.strategies.htf_filter import get_htf_trend
 def _check_entry_quality(df: pd.DataFrame, direction: int) -> bool:
     """
     Entry confirmation gate — filters out weak signals.
-    Keeps: ADX trending, Volume, RSI guard.
-    Removed: MACD alignment (conflicts with mean-reversion strategies).
+    Keeps: ADX trending, Volume expansion, RSI guard.
     """
     last = df.iloc[-1]
 
-    # ── 1. ADX Trending Market Gate ──
-    # Only trade when there's some trend (ADX > 15).
-    # Very low ADX = pure chop where everything whipsaws.
+    # ── 1. TREND STRENGTH GATE (ADX Lockdown) ──
+    # Alpha-X requires a confirmed trend. ADX < 20 is 'no-trade zone'.
+    # This filters out choppy sideways markets while allowing fresh trends.
     adx = last.get("adx", 0)
-    if not np.isnan(adx) and adx < 15:
+    if not np.isnan(adx) and adx < 20:
         return False
 
-    # ── 2. Volume Confirmation ──
-    # Current bar volume should be reasonable (>= 80% of average).
-    # Blocks ghost moves on zero volume.
+    # ── 2. VOLATILITY EXPANSION GUARD ──
+    # Only trade if Bollinger Bands are expanding or already wide.
+    # We compare current width to the 10-period moving average.
+    current_width = last.get("bb200_width", 0)
+    width_ma = df["bb200_width"].iloc[-10:].mean()
+    if current_width > 0 and current_width < width_ma * 0.95:
+        # Volatility is significantly contracting — skip entries
+        return False
+
+    # ── 3. VOLUME CONFIRMATION ──
     vol = last.get("volume", 0)
     vol_ma = last.get("vol_ma_20", 0)
     if vol_ma > 0 and vol < vol_ma * 0.8:
         return False
 
-    # ── 3. RSI Zone Guard ──
-    # Don't buy into overbought (RSI > 70) or sell into oversold (RSI < 30).
-    # These are exhaustion zones where reversals are likely.
+    # ── 4. RSI ZONE GUARD ──
     rsi = last.get("rsi_14", 50)
     if not np.isnan(rsi):
         if direction == BUY and rsi > 70:

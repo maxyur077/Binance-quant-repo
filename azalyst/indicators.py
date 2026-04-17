@@ -36,11 +36,12 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["bb_upper"] = df["bb_mid"] + 2.0 * bb_std
     df["bb_lower"] = df["bb_mid"] - 2.0 * bb_std
 
-    # --- Alpha-X Institutional BB (200, SD 1) ---
+    # --- Alpha-X Institutional BB (200, SD 1.5) ---
+    # Increased from 1.0 to 1.5 to filter out 'noise' and increase Win Rate.
     df["bb200_mid"] = df["close"].rolling(200).mean()
     bb200_std = df["close"].rolling(200).std()
-    df["bb200_upper"] = df["bb200_mid"] + 1.0 * bb200_std
-    df["bb200_lower"] = df["bb200_mid"] - 1.0 * bb200_std
+    df["bb200_upper"] = df["bb200_mid"] + 1.5 * bb200_std
+    df["bb200_lower"] = df["bb200_mid"] - 1.5 * bb200_std
     # Bandwidth for Alpha-X filter
     df["bb200_width"] = (df["bb200_upper"] - df["bb200_lower"]) / df["bb200_mid"].replace(0.0, float("nan"))
 

@@ -400,12 +400,11 @@ class LiveTrader:
             if symbol in self.open_trades:
                 continue
 
-            same_direction_trades = len([t for t in self.open_trades.values() if t["direction"] == BUY])
-            if (same_direction_trades >= MAX_SAME_DIRECTION or
-               len(self.open_trades) - same_direction_trades >= MAX_SAME_DIRECTION):
-               logger.info(f"Correlation limit reached. Skipping remaining symbols.")
-               break
-
+            # --- Correlation & Exposure Guard Pre-Check ---
+            open_list = list(self.open_trades.values())
+            longs = [t for t in open_list if t["direction"] == BUY]
+            shorts = [t for t in open_list if t["direction"] == SELL]
+            
             df = self.fetch_ohlcv(symbol, f"{CANDLE_TF_MIN}m", 250)
             if df.empty or len(df) < 200:
                 continue
@@ -422,6 +421,25 @@ class LiveTrader:
             sig = multi_strategy_scan(df, htf_df=htf_df)
             if sig is None:
                 continue
+
+            # --- Post-Signal Exposure Enforcement ---
+            direction = sig["direction"]
+            strategies = sig.get("strategies", [])
+            
+            # 1. Directional Correlation Cap
+            if direction == BUY and len(longs) >= MAX_SAME_DIRECTION:
+                logger.info(f"   [SKIP] {symbol} LONG cap reached ({MAX_SAME_DIRECTION})")
+                continue
+            if direction == SELL and len(shorts) >= MAX_SAME_DIRECTION:
+                logger.info(f"   [SKIP] {symbol} SHORT cap reached ({MAX_SAME_DIRECTION})")
+                continue
+
+            # 2. Strategy Exposure Limit (Alpha-X)
+            if "alpha_x" in strategies:
+                alpha_x_count = len([t for t in open_list if "alpha_x" in t.get("strategies", "")])
+                if alpha_x_count >= 7:
+                    logger.info(f"   [SKIP] {symbol} Max Alpha-X exposure reached (7)")
+                    continue
 
             self.execute_trade(symbol, df, sig)
             time.sleep(0.5)

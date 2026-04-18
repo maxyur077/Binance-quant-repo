@@ -100,8 +100,8 @@ def multi_strategy_scan(df: pd.DataFrame, htf_df: Optional[pd.DataFrame] = None)
     if buy_count >= MIN_AGREEMENT and buy_weight >= WEIGHTED_THRESHOLD and buy_count > sell_count:
         # HTF Filter: Ignore long signals if macro trend is bearish
         if htf_trend == -1: return None
-        # RSI Guard: Don't buy if already extremely overbought
-        if not np.isnan(rsi) and rsi > 70: return None
+        # RSI Guard: Only block at extreme exhaustion levels (>85)
+        if not np.isnan(rsi) and rsi > 85: return None
         
         return {
             "direction": BUY,
@@ -113,8 +113,8 @@ def multi_strategy_scan(df: pd.DataFrame, htf_df: Optional[pd.DataFrame] = None)
     if sell_count >= MIN_AGREEMENT and sell_weight >= WEIGHTED_THRESHOLD and sell_count > buy_count:
         # HTF Filter: Ignore short signals if macro trend is bullish
         if htf_trend == 1: return None
-        # RSI Guard: Don't sell if already extremely oversold
-        if not np.isnan(rsi) and rsi < 30: return None
+        # RSI Guard: Only block at extreme exhaustion levels (<15)
+        if not np.isnan(rsi) and rsi < 15: return None
 
         return {
             "direction": SELL,

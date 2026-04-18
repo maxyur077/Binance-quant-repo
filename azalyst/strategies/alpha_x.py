@@ -7,8 +7,8 @@ from azalyst.config import BUY, SELL, HOLD
 BREAKOUT_LOOKBACK = 20   
 ENTRY_WINDOW      = 10   
 MIN_BREAKOUT_PCT  = 0.006  # 0.6% (Filtering noise even harder)
-MAX_SQUEEZE_PCT   = 0.35   # ONLY trade if bands are in the tightest 35% of history
-VOL_SURGE_MULT    = 2.0    # 2.0x volume spike required
+MAX_SQUEEZE_PCT   = 0.50   # Relaxed slightly to allow live trading activity
+VOL_SURGE_MULT    = 1.5    # Adjusted for live market activity
 TOUCH_TOL         = 0.0025 
 
 def signal(df: pd.DataFrame) -> int:

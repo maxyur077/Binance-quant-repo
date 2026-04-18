@@ -2,94 +2,102 @@ import pandas as pd
 import numpy as np
 from azalyst.config import BUY, SELL, HOLD
 
+# ── Alpha-X Institutional Squeeze (v5) ──
+# Targets: 40% Win Rate / 60-Day Consistency
+BREAKOUT_LOOKBACK = 20   
+ENTRY_WINDOW      = 10   
+MIN_BREAKOUT_PCT  = 0.006  # 0.6% (Filtering noise even harder)
+MAX_SQUEEZE_PCT   = 0.35   # ONLY trade if bands are in the tightest 35% of history
+VOL_SURGE_MULT    = 2.0    # 2.0x volume spike required
+TOUCH_TOL         = 0.0025 
+
 def signal(df: pd.DataFrame) -> int:
     """
-    ALPHA-X Professional Breakout-Pullback
-    Logic from Azalyst Alpha-X (250% Annual Return)
-    1. Breakout: Price closed ABOVE BB(200, 1.0).
-    2. Pullback: Price retraced and touched the band.
-    3. Trigger: Current close > Pullback close.
+    ALPHA-X Institutional Squeeze (v5)
+    ----------------------------------
+    Focuses on VOLATILITY COMPRESSION. We only enter trades that break out
+    from a 'Squeeze' zone. This is the highest win-rate institutional pattern.
     """
-    if len(df) < 5:
+    if len(df) < 210:
         return HOLD
-
-    # Alpha-X Config Constants (Mirrored from main.py)
-    MIN_BREAKOUT_PCT = 0.002
-    MIN_BANDWIDTH_PCT = 0.008
-    TOUCH_TOL = 0.0025 # 0.25%
 
     current = df.iloc[-1]
-    pullback = df.iloc[-2]
-    breakout = df.iloc[-3]
-
-    # --- 1. Sideways / Sniper Filters (ALL must pass) ---
-    bandwidth_pct = (current["bb200_upper"] - current["bb200_lower"]) / current["bb200_mid"]
-    if bandwidth_pct < MIN_BANDWIDTH_PCT:
-        return HOLD
     
-    # Sniper: Candle Conviction & Body Ratio
-    is_strong_body = current["body_ratio"] >= 0.5
-    rsi_val = current.get("rsi_9", 50)
-    
-    # --- 2. Long Logic (Upper Band) ---
-    # Step A: Meaningful Breakout (3 candles ago)
-    breakout_distance = (breakout["close"] - breakout["bb200_upper"]) / breakout["bb200_upper"]
-    
-    # Step B: Pullback Touch (2 candles ago)
-    tol_u = pullback["bb200_upper"] * TOUCH_TOL
-    touched_upper = (
-        pullback["low"] <= pullback["bb200_upper"] + tol_u
-        and pullback["high"] >= pullback["bb200_upper"] - tol_u
-        and pullback["close"] < breakout["close"] # Retracing
-    )
-    
-    # Step C: Sniper Momentum Trigger (Current candle)
-    # Price must be above middle band (SMA 200)
-    is_above_mid = current["close"] > current["bb200_mid"]
-    is_bullish = current["close"] > current["open"]
-    momentum_up = current["close"] > pullback["close"]
-    rsi_safe_long = rsi_val < 70 # Not overbought
-    
-    if (breakout["close"] > breakout["bb200_upper"] and 
-        breakout_distance >= MIN_BREAKOUT_PCT and 
-        touched_upper and 
-        momentum_up and 
-        is_above_mid and
-        is_strong_body and
-        is_bullish and
-        rsi_safe_long):
-        return BUY
+    # --- Filter 1: Squeeze Detector (The Secret Sauce) ---
+    squeeze_val = current.get("bb200_squeeze", 1.0)
+    if squeeze_val > MAX_SQUEEZE_PCT:
+        return HOLD # Market is too loose — wait for a tighter squeeze
 
-    # --- 3. Short Logic (Lower Band) ---
-    # Step A: Meaningful Breakdown
-    breakdown_distance = (breakout["bb200_lower"] - breakout["close"]) / breakout["bb200_lower"]
-
-    # Step B: Bounce Touch
-    tol_l = abs(pullback["bb200_lower"]) * TOUCH_TOL
-    touched_lower = (
-        pullback["high"] >= pullback["bb200_lower"] - tol_l
-        and pullback["low"] <= pullback["bb200_lower"] + tol_l
-        and pullback["close"] > breakout["close"] # Bouncing
-    )
-
-    # Step C: Sniper Momentum Trigger
-    is_below_mid = current["close"] < current["bb200_mid"]
-    is_bearish = current["close"] < current["open"]
-    momentum_down = current["close"] < pullback["close"]
-    rsi_safe_short = rsi_val > 30 # Not oversold
-
-    if (breakout["close"] < breakout["bb200_lower"] and 
-        breakdown_distance >= MIN_BREAKOUT_PCT and 
-        touched_lower and 
-        momentum_down and 
-        is_below_mid and
-        is_strong_body and
-        is_bearish and
-        rsi_safe_short):
-        return SELL
-
+    # --- Filter 2: Momentum Quality ---
+    if current["close"] > current["bb200_mid"]:
+        if current["close"] > current["open"]:
+            if _check_long(df, current): return BUY
+    elif current["close"] < current["bb200_mid"]:
+        if current["close"] < current["open"]:
+            if _check_short(df, current): return SELL
+        
     return HOLD
 
-    return HOLD
+def _check_long(df: pd.DataFrame, current: pd.Series) -> bool:
+    n = len(df)
+    breakout = None
+    breakout_pos = None
 
-    return HOLD
+    for offset in range(2, min(BREAKOUT_LOOKBACK + 1, n - 1)):
+        candidate = df.iloc[-1 - offset]
+        if candidate["close"] > candidate["bb200_upper"]:
+            # Volume Confirmation (2.0x)
+            c_vol = candidate.get("volume", 0)
+            c_vol_ma = candidate.get("vol_ma_20", 1)
+            if c_vol < c_vol_ma * VOL_SURGE_MULT: continue 
+
+            bd = (candidate["close"] - candidate["bb200_upper"]) / candidate["bb200_upper"]
+            if bd >= MIN_BREAKOUT_PCT:
+                breakout = candidate
+                breakout_pos = offset
+                break
+
+    if breakout is None or breakout_pos > ENTRY_WINDOW:
+        return False
+
+    for pb_offset in range(1, breakout_pos):
+        pullback = df.iloc[-1 - pb_offset]
+        tol = pullback["bb200_upper"] * TOUCH_TOL
+        if (pullback["low"] <= pullback["bb200_upper"] + tol and 
+            pullback["close"] < breakout["close"] and 
+            current["close"] > pullback["close"]):
+            return True
+            
+    return False
+
+def _check_short(df: pd.DataFrame, current: pd.Series) -> bool:
+    n = len(df)
+    breakdown = None
+    breakdown_pos = None
+
+    for offset in range(2, min(BREAKOUT_LOOKBACK + 1, n - 1)):
+        candidate = df.iloc[-1 - offset]
+        if candidate["close"] < candidate["bb200_lower"]:
+            # Volume Confirmation (2.0x)
+            c_vol = candidate.get("volume", 0)
+            c_vol_ma = candidate.get("vol_ma_20", 1)
+            if c_vol < c_vol_ma * VOL_SURGE_MULT: continue
+
+            bd = (candidate["bb200_lower"] - candidate["close"]) / candidate["bb200_lower"]
+            if bd >= MIN_BREAKOUT_PCT:
+                breakdown = candidate
+                breakdown_pos = offset
+                break
+
+    if breakdown is None or breakdown_pos > ENTRY_WINDOW:
+        return False
+
+    for pb_offset in range(1, breakdown_pos):
+        bounce = df.iloc[-1 - pb_offset]
+        tol = abs(bounce["bb200_lower"]) * TOUCH_TOL
+        if (bounce["high"] >= bounce["bb200_lower"] - tol and 
+            bounce["close"] > breakdown["close"] and 
+            current["close"] < bounce["close"]):
+            return True
+            
+    return False

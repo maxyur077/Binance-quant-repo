@@ -21,8 +21,8 @@ SL_MAX_PCT = 0.05
 MAX_OPEN_TRADES = 10
 MAX_HOLD_SCANS = 48
 BREAKEVEN_AFTER_SCANS = 12       
-SCAN_INTERVAL_MIN = 10          # Alpha-X 10m Scan
-CANDLE_TF_MIN = 10              # Alpha-X 10m Candle
+SCAN_INTERVAL_MIN = 15          # Alpha-X 15m Scan (Binance Support)
+CANDLE_TF_MIN = 15              # Alpha-X 15m Candle (Binance Support)
 
 PROP_MAX_DRAWDOWN_PCT = 50.0
 PROP_DAILY_LOSS_PCT = 25.0

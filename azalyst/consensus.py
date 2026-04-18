@@ -17,26 +17,16 @@ def _check_entry_quality(df: pd.DataFrame, direction: int) -> bool:
     """
     last = df.iloc[-1]
 
-    # ── 1. TREND STRENGTH GATE (ADX Lockdown) ──
-    # Alpha-X requires a confirmed trend. ADX < 20 is 'no-trade zone'.
-    # This filters out choppy sideways markets while allowing fresh trends.
+    # ── 1. TREND STRENGTH GATE ──
+    # Reduced floor to 15 to capture trends early.
     adx = last.get("adx", 0)
-    if not np.isnan(adx) and adx < 20:
-        return False
-
-    # ── 2. VOLATILITY EXPANSION GUARD ──
-    # Only trade if Bollinger Bands are expanding or already wide.
-    # We compare current width to the 10-period moving average.
-    current_width = last.get("bb200_width", 0)
-    width_ma = df["bb200_width"].iloc[-10:].mean()
-    if current_width > 0 and current_width < width_ma * 0.95:
-        # Volatility is significantly contracting — skip entries
+    if not np.isnan(adx) and adx < 15:
         return False
 
     # ── 3. VOLUME CONFIRMATION ──
     vol = last.get("volume", 0)
     vol_ma = last.get("vol_ma_20", 0)
-    if vol_ma > 0 and vol < vol_ma * 0.8:
+    if vol_ma > 0 and vol < vol_ma * 0.6:
         return False
 
     # ── 4. RSI ZONE GUARD ──
@@ -103,13 +93,16 @@ def multi_strategy_scan(df: pd.DataFrame, htf_df: Optional[pd.DataFrame] = None)
             sell_strategies.append(name)
 
     atr_val = df["atr_14"].iloc[-1]
+    rsi = last.get("rsi_14", 50)
     if np.isnan(atr_val) or atr_val <= 0:
         return None
 
     if buy_count >= MIN_AGREEMENT and buy_weight >= WEIGHTED_THRESHOLD and buy_count > sell_count:
-        # ── Entry Quality Gate ──
-        if not _check_entry_quality(df, BUY):
-            return None
+        # HTF Filter: Ignore long signals if macro trend is bearish
+        if htf_trend == -1: return None
+        # RSI Guard: Don't buy if already extremely overbought
+        if not np.isnan(rsi) and rsi > 70: return None
+        
         return {
             "direction": BUY,
             "atr": float(atr_val),
@@ -118,9 +111,11 @@ def multi_strategy_scan(df: pd.DataFrame, htf_df: Optional[pd.DataFrame] = None)
         }
 
     if sell_count >= MIN_AGREEMENT and sell_weight >= WEIGHTED_THRESHOLD and sell_count > buy_count:
-        # ── Entry Quality Gate ──
-        if not _check_entry_quality(df, SELL):
-            return None
+        # HTF Filter: Ignore short signals if macro trend is bullish
+        if htf_trend == 1: return None
+        # RSI Guard: Don't sell if already extremely oversold
+        if not np.isnan(rsi) and rsi < 30: return None
+
         return {
             "direction": SELL,
             "atr": float(atr_val),

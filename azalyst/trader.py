@@ -574,6 +574,18 @@ class LiveTrader:
             tp = trade["tp_price"]
             entry = trade["entry_price"]
 
+            # --- FAST BREAKEVEN PROTECTION (Target: 40% Win Rate) ---
+            # Once price moves 0.5% in favor, move SL to Entry to go 'Risk Free'
+            pnl_move = (current_price - entry) / entry
+            if direction == BUY:
+                if pnl_move >= 0.005 and trade["sl_price"] < entry:
+                    trade["sl_price"] = entry
+                    logger.info(f"   [PROTECT] {symbol} moved to Breakeven (0.5% profit reached)")
+            else:
+                if pnl_move <= -0.005 and trade["sl_price"] > entry:
+                    trade["sl_price"] = entry
+                    logger.info(f"   [PROTECT] {symbol} moved to Breakeven (0.5% profit reached)")
+
             closed = False
             exit_price = None
             reason = ""

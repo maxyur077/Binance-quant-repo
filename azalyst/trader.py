@@ -592,16 +592,19 @@ class LiveTrader:
         tp_display = f"${tp_price:.4f}"
         sl_display = f"${sl_price:.4f}"
 
-        send_alerts(
-            f"🔔 **NEW TRADE**",
-            f"**{symbol}** {'LONG' if direction == BUY else 'SHORT'}\n"
-            f"Entry: ${fill_price:.4f}\n"
-            f"SL: {sl_display} | TP: {tp_display}\n"
-            f"Signal: {sig['signal']}\n"
-            f"Strategies: {strat_str}",
-            telegram_token=self.config.get("telegram_token"),
-            telegram_chat_id=self.config.get("telegram_chat_id")
-        )
+        try:
+            send_alerts(
+                f"🔔 **NEW TRADE**",
+                f"**{symbol}** {'LONG' if direction == BUY else 'SHORT'}\n"
+                f"Entry: ${fill_price:.4f}\n"
+                f"SL: {sl_display} | TP: {tp_display}\n"
+                f"Signal: {sig.get('signal', 'Manual')}\n"
+                f"Strategies: {strat_str}",
+                telegram_token=self.config.get("telegram_token"),
+                telegram_chat_id=self.config.get("telegram_chat_id")
+            )
+        except Exception as alert_err:
+            logger.error(f"Failed to send Buy alert: {alert_err}")
 
     def manage_open_trades(self, main_scan: bool = True):
         symbols_to_check = list(self.open_trades.keys())
@@ -630,17 +633,21 @@ class LiveTrader:
             tp = trade["tp_price"]
             entry = trade["entry_price"]
 
-            # --- FAST BREAKEVEN PROTECTION (Target: 40% Win Rate) ---
-            # Once price moves 0.5% in favor, move SL to Entry to go 'Risk Free'
+            # --- FAST BREAKEVEN PROTECTION (Breakeven Guard) ---
+            # Once price moves 0.5% in favor, move SL to Entry + Buffer to go 'Risk Free'
             pnl_move = (current_price - entry) / entry
             if direction == BUY:
-                if pnl_move >= 0.005 and trade["sl_price"] < entry:
-                    trade["sl_price"] = entry
-                    logger.info(f"   [PROTECT] {symbol} moved to Breakeven (0.5% profit reached)")
+                # Move SL to just below entry (Safety Buffer)
+                buffer_sl = entry * 0.9995 
+                if pnl_move >= 0.005 and trade["sl_price"] < buffer_sl:
+                    trade["sl_price"] = buffer_sl
+                    logger.info(f"   [PROTECT] {symbol} moved to Breakeven Guard (0.5% profit reached)")
             else:
-                if pnl_move <= -0.005 and trade["sl_price"] > entry:
-                    trade["sl_price"] = entry
-                    logger.info(f"   [PROTECT] {symbol} moved to Breakeven (0.5% profit reached)")
+                # Move SL to just above entry (Safety Buffer) for Shorts
+                buffer_sl = entry * 1.0005
+                if pnl_move <= -0.005 and trade["sl_price"] > buffer_sl:
+                    trade["sl_price"] = buffer_sl
+                    logger.info(f"   [PROTECT] {symbol} moved to Breakeven Guard (0.5% profit reached)")
 
             closed = False
             exit_price = None

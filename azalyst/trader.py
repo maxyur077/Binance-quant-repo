@@ -506,12 +506,12 @@ class LiveTrader:
             # 100% SPEC PARITY: SL is the pullback candle extreme
             # Increased buffer to 0.25% for 'Sniper' win-rate improvement
             if direction == BUY:
-                sl_price = df["low"].iloc[-2] * 0.9975 # Sniper Buffer
+                sl_price = df["low"].iloc[-2] * 0.9950 # 0.5% Safety Buffer
                 tp_price = fill_price + move * 1.618  # Primary target
                 tp1 = fill_price + move * 1.272
                 tp2 = fill_price + move * 1.618
             else:
-                sl_price = df["high"].iloc[-2] * 1.0025 # Sniper Buffer
+                sl_price = df["high"].iloc[-2] * 1.0050 # 0.5% Safety Buffer
                 tp_price = fill_price - move * 1.618
                 tp1 = fill_price - move * 1.272
                 tp2 = fill_price - move * 1.618

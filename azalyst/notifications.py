@@ -12,9 +12,17 @@ def send_telegram_alert(title: str, message: str, bot_token: str = None, chat_id
         return
     try:
         import requests
+        # Convert to string to avoid object errors
+        title_str = str(title)
+        message_str = str(message)
+        
+        # Escape underscores for Telegram Markdown (stops '400 Bad Request' on strategy names)
+        safe_title = title_str.replace("_", "\\_")
+        safe_msg = message_str.replace("_", "\\_")
+        
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        text = f"{title}\n\n{message}"
-        payload = {"chat_id": cid, "text": text, "parse_mode": "Markdown"}
+        full_text = f"{safe_title}\n\n{safe_msg}"
+        payload = {"chat_id": cid, "text": full_text, "parse_mode": "Markdown"}
         resp = requests.post(url, json=payload, timeout=10)
         resp.raise_for_status()
         logger.info(f"Telegram alert sent successfully")

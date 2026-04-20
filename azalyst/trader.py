@@ -368,7 +368,7 @@ class LiveTrader:
         self._refresh_top_coins()
 
         send_alerts(
-            "🚀 **TRADER STARTED**",
+            "🚀 <b>TRADER STARTED</b>",
             f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}\n"
             f"Symbols: {len(self.symbols)}\n"
             f"Leverage: {LEVERAGE}x\n"
@@ -411,7 +411,7 @@ class LiveTrader:
                 self.daily_target_reached = True
                 logger.info(f"🎯 DAILY PROFIT TARGET REACHED: ${self.daily_pnl:.2f} >= ${self.daily_profit_target:.2f}")
                 send_alerts(
-                    "🎯 **DAILY TARGET REACHED**",
+                    "🎯 <b>DAILY TARGET REACHED</b>",
                     f"Profit: ${self.daily_pnl:.2f} / Target: ${self.daily_profit_target:.2f}\n"
                     f"Bot will stop taking new trades until tomorrow."
                 )
@@ -516,18 +516,17 @@ class LiveTrader:
                 tp1 = fill_price - move * 1.272
                 tp2 = fill_price - move * 1.618
         else:
-            # Standard ATR logic for other strategies
-            sl_dist = max(min(self.config["atr_mult"] * atr, fill_price * SL_MAX_PCT), fill_price * SL_MIN_PCT)
+            # --- GLOBAL FALLBACK SL/TP (For other strategies) ---
+            # Now using the same 0.5% Safety Buffer to prevent tight wick-outs
+            atr = df["atr_14"].iloc[-1]
             if direction == BUY:
-                sl_price = fill_price - sl_dist
-                tp_price = fill_price + sl_dist * self.config["tp_rr_ratio"]
-                tp1 = tp_price
-                tp2 = None
+                sl_price = df["low"].iloc[-2] * 0.9950 # 0.5% Safety Buffer
+                tp_price = fill_price + (atr * self.config["tp_rr_ratio"])
             else:
-                sl_price = fill_price + sl_dist
-                tp_price = fill_price - sl_dist * self.config["tp_rr_ratio"]
-                tp1 = tp_price
-                tp2 = None
+                sl_price = df["high"].iloc[-2] * 1.0050 # 0.5% Safety Buffer
+                tp_price = fill_price - (atr * self.config["tp_rr_ratio"])
+            tp1 = tp_price
+            tp2 = None
 
         # --- FINAL NAN GUARD (Direction-Aware Safety) ---
         if direction == BUY:
@@ -594,8 +593,8 @@ class LiveTrader:
 
         try:
             send_alerts(
-                f"🔔 **NEW TRADE**",
-                f"**{symbol}** {'LONG' if direction == BUY else 'SHORT'}\n"
+                f"🔔 <b>NEW TRADE</b>",
+                f"<b>{symbol}</b> {'LONG' if direction == BUY else 'SHORT'}\n"
                 f"Entry: ${fill_price:.4f}\n"
                 f"SL: {sl_display} | TP: {tp_display}\n"
                 f"Signal: {sig.get('signal', 'Manual')}\n"
@@ -817,8 +816,8 @@ class LiveTrader:
         del self.open_trades[symbol]
 
         send_alerts(
-            f"{emoji} **TRADE CLOSED**",
-            f"**{symbol}**\n"
+            f"{emoji} <b>TRADE CLOSED</b>",
+            f"<b>{symbol}</b>\n"
             f"PnL: {pnl_pct:+.2f}% (${pnl_usd:+.2f})\n"
             f"Reason: {reason}",
             telegram_token=self.config.get("telegram_token"),

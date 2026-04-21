@@ -12,8 +12,8 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 INITIAL_BALANCE = 100.0
-LEVERAGE = 30
-RISK_PER_TRADE = 0.02          # Restored to 2.0% for 'Big Profit' windows
+LEVERAGE = 15
+RISK_PER_TRADE = 0.07          # Restored to 2.0% for 'Big Profit' windows
 ATR_MULT = 1.4
 TP_RR_RATIO = 1.5              
 SL_MIN_PCT = 0.01

@@ -178,12 +178,24 @@
 
         var defaultBtn = $("useDefaultConfig");
         if (defaultBtn) {
-            defaultBtn.addEventListener("click", function(e) {
+            defaultBtn.addEventListener("click", async function(e) {
                 e.preventDefault();
-                $("cfgTpRatio").value = "1.8";
-                $("cfgAtrMult").value = "1.2";
-                $("cfgRisk").value = "0.10";
-                $("cfgLeverage").value = "10";
+                if (confirm("Reset strategy fields to code defaults? (You must click Save to apply)")) {
+                    const resp = await fetch("/api/config/defaults");
+                    const data = await resp.json();
+                    if (!data.error) {
+                        $("cfgTpRatio").value = data.tp_rr_ratio;
+                        $("cfgAtrMult").value = data.atr_mult;
+                        $("cfgRisk").value = data.risk_per_trade;
+                        $("cfgLeverage").value = data.leverage;
+                        $("cfgTopCoins").value = data.top_n_coins;
+                        
+                        // Flash success text
+                        var oldText = this.textContent;
+                        this.textContent = "✅ Values loaded (Click Save)";
+                        setTimeout(() => { this.textContent = oldText; }, 3000);
+                    }
+                }
             });
         }
 

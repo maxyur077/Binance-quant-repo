@@ -1,6 +1,9 @@
 from flask import Blueprint, jsonify, request, session
 from dashboard.routes.auth import login_required
 from azalyst import db as supabase_db
+from azalyst.config import (
+    TP_RR_RATIO, RISK_PER_TRADE, ATR_MULT, LEVERAGE, TOP_N_COINS
+)
 
 api_bp = Blueprint("api", __name__)
 
@@ -118,6 +121,20 @@ def api_change_mode():
     _trader_instance.reconfigure(dry_run=(mode == "dry_run"), api_key=api_key, api_secret=api_secret)
     
     return jsonify({"success": True, "mode": mode})
+
+
+@api_bp.route("/api/config/defaults", methods=["GET"])
+@login_required
+def api_get_config_defaults():
+    # Strictly returns values from config.py
+    strategy_mapping = {
+        "tp_rr_ratio": TP_RR_RATIO,
+        "risk_per_trade": RISK_PER_TRADE,
+        "atr_mult": ATR_MULT,
+        "leverage": LEVERAGE,
+        "top_n_coins": TOP_N_COINS
+    }
+    return jsonify(strategy_mapping)
 
 
 @api_bp.route("/api/settings/config", methods=["GET"])

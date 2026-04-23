@@ -217,12 +217,25 @@ class LiveTrader:
             return
         fetched = self.broker.fetch_wallet_balance()
         if fetched is not None:
+            # Detect external deposits/withdrawals
+            if self.live_balance is not None and fetched != self.live_balance:
+                # If we have no open trades, any change is likely an external move
+                # In a more complex version, we would subtract the current session's PnL here.
+                if not self.open_trades:
+                    diff = fetched - self.live_balance
+                    logger.info(f"💰 External wallet move detected: {diff:+.2f}. Adjusting baselines.")
+                    self.initial_balance += diff
+                    self.daily_start_balance += diff
+
             # If this is the first time we're syncing live balance and we have no history,
             # use this as our starting point for all metrics.
             if self.live_balance is None and not self.equity_curve:
+                # Fix for fresh accounts: if initial is still default 100, align it
+                if self.initial_balance == 100.0 and fetched != 100.0:
+                    logger.info(f"✨ Initializing balance from live wallet: ${fetched:.2f}")
+                    self.initial_balance = fetched
+                    self.daily_start_balance = fetched
                 self.balance = fetched
-                self.initial_balance = fetched
-                self.daily_start_balance = fetched
             
             self.live_balance = fetched
             # Always sync main balance with live wallet in Live mode

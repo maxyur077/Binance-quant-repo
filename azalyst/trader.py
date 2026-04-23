@@ -510,16 +510,14 @@ class LiveTrader:
             drawdown = 0.0
             
         if drawdown >= PROP_MAX_DRAWDOWN_PCT:
-            logger.warn(f"MAX DRAWDOWN HIT: {drawdown:.1f}% >= {PROP_MAX_DRAWDOWN_PCT}%")
-            logger.warn("Stopping all trading until manual review")
-            return False
-
+            logger.warn(f"⚠️ MAX DRAWDOWN ALERT: {drawdown:.1f}% >= {PROP_MAX_DRAWDOWN_PCT}%")
+            logger.info("Prop Firm Safety is DISABLED. Continuing trade scan...")
+            
         if self.daily_pnl <= -self.config.get("prop_daily_loss_pct", PROP_DAILY_LOSS_PCT) * self.daily_start_balance / 100:
-            logger.warn(f"DAILY LOSS LIMIT HIT: ${self.daily_pnl:.2f}")
-            logger.warn("Stopping trading for today")
-            return False
+            logger.warn(f"⚠️ DAILY LOSS LIMIT ALERT: ${self.daily_pnl:.2f}")
+            logger.info("Prop Firm Safety is DISABLED. Continuing trade scan...")
 
-        return True
+        return True # Limits removed as per user request
 
     def scan_and_trade(self):
         if self.paused:

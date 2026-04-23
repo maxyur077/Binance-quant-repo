@@ -94,6 +94,56 @@ class LiveBinanceBroker(BaseBroker):
         except Exception as exc:
             logger.warning(f"Could not set leverage for {symbol}: {exc}")
 
+    def place_sl_tp(self, symbol: str, side: str, qty: float, sl_price: float, tp_price: float) -> dict:
+        """
+        Place real Stop Loss and Take Profit orders on Binance Futures.
+        Uses 'reduceOnly' to ensure these orders only close the position.
+        """
+        results = {"sl": None, "tp": None}
+        try:
+            # 1. Place Stop Loss (Stop Market)
+            results["sl"] = self._exchange.create_order(
+                symbol=symbol,
+                type="STOP_MARKET",
+                side=side,
+                amount=qty,
+                params={
+                    "stopPrice": sl_price,
+                    "reduceOnly": True,
+                    "workingType": "MARK_PRICE"
+                }
+            )
+            logger.info(f"📍 Real Stop Loss placed for {symbol} at ${sl_price:.4f}")
+        except Exception as e:
+            logger.error(f"❌ Failed to place Real SL for {symbol}: {e}")
+
+        try:
+            # 2. Place Take Profit (Take Profit Market)
+            results["tp"] = self._exchange.create_order(
+                symbol=symbol,
+                type="TAKE_PROFIT_MARKET",
+                side=side,
+                amount=qty,
+                params={
+                    "stopPrice": tp_price,
+                    "reduceOnly": True,
+                    "workingType": "MARK_PRICE"
+                }
+            )
+            logger.info(f"🎯 Real Take Profit placed for {symbol} at ${tp_price:.4f}")
+        except Exception as e:
+            logger.error(f"❌ Failed to place Real TP for {symbol}: {e}")
+            
+        return results
+
+    def cancel_symbol_orders(self, symbol: str) -> None:
+        """Cancel all open orders for a specific symbol (clean up SL/TP)"""
+        try:
+            self._exchange.cancel_all_orders(symbol)
+            logger.info(f"🧹 Cancelled all open orders for {symbol}")
+        except Exception as e:
+            logger.error(f"Failed to cancel orders for {symbol}: {e}")
+
     def load_markets(self) -> dict:
         return self._exchange.load_markets()
 

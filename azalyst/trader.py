@@ -691,7 +691,13 @@ class LiveTrader:
         if self.broker.is_live:
             try:
                 side = "buy" if direction == BUY else "sell"
+                # 1. Place Entry
                 self.broker.place_market_order(symbol, side, qty)
+                
+                # 2. Place Real TP/SL on Exchange
+                exit_side = "sell" if side == "buy" else "buy"
+                self.broker.place_sl_tp(symbol, exit_side, qty, sl_price, tp_price)
+
                 logger.trade(f"OPENED: {symbol} {'LONG' if direction == BUY else 'SHORT'} @ ${fill_price:.4f} | "
                              f"SL: ${sl_price:.4f} | TP: ${tp_price:.4f} | Qty: {qty:.4f}")
             except Exception as e:
@@ -867,21 +873,23 @@ class LiveTrader:
                         new_sl = current_price - trail_dist
                         new_sl = max(new_sl, entry)
                         if new_sl > trade["sl_price"]:
+                            old_sl = trade["sl_price"]
                             trade["sl_price"] = new_sl
-                            logger.info(
-                                f"📈 Trailing {symbol} SL → ${new_sl:.4f} "
-                                f"(Price: ${current_price:.4f} | PnL: {pnl_pct:+.2f}%)"
-                            )
+                            logger.info(f"📈 Trailing SL moved for {symbol}: ${old_sl:.4f} -> ${new_sl:.4f}")
+                            if self.broker.is_live:
+                                self.broker.cancel_symbol_orders(symbol)
+                                self.broker.place_sl_tp(symbol, "sell", trade["qty"], trade["sl_price"], trade["tp_price"])
                             self._save_trade(trade, "open")
                     else:
                         new_sl = current_price + trail_dist
                         new_sl = min(new_sl, entry)
                         if new_sl < trade["sl_price"]:
+                            old_sl = trade["sl_price"]
                             trade["sl_price"] = new_sl
-                            logger.info(
-                                f"📈 Trailing {symbol} SL → ${new_sl:.4f} "
-                                f"(Price: ${current_price:.4f} | PnL: {pnl_pct:+.2f}%)"
-                            )
+                            logger.info(f"📈 Trailing SL moved for {symbol}: ${old_sl:.4f} -> ${new_sl:.4f}")
+                            if self.broker.is_live:
+                                self.broker.cancel_symbol_orders(symbol)
+                                self.broker.place_sl_tp(symbol, "buy", trade["qty"], trade["sl_price"], trade["tp_price"])
                             self._save_trade(trade, "open")
 
             if not closed and trade["scan_count"] >= MAX_HOLD_SCANS:
@@ -923,6 +931,7 @@ class LiveTrader:
 
         if self.broker.is_live:
             try:
+                self.broker.cancel_symbol_orders(symbol)
                 side = "sell" if direction == BUY else "buy"
                 self.broker.place_market_order(symbol, side, qty)
             except Exception as e:
@@ -1015,20 +1024,20 @@ class LiveTrader:
                     self.print_status()
 
                     logger.info(f"Next scan in {SCAN_INTERVAL_MIN} minutes...")
-                    loops = (SCAN_INTERVAL_MIN * 60) // 5
+                    loops = (SCAN_INTERVAL_MIN * 60) // 3
                     for i in range(loops):
                         if not self.running:
                             break
                         try:
-                            # Sync balance every 1 minute (12 * 5s)
-                            if i % 12 == 0:
+                            # Sync balance every 1 minute (20 * 3s)
+                            if i % 20 == 0:
                                 self._sync_live_balance()
                             
-                            # Manage prices every 5s
+                            # Manage prices every 3s
                             self.manage_open_trades(main_scan=False)
                         except Exception as e:
                             logger.error(f"Error managing trades: {e}")
-                        time.sleep(5)
+                        time.sleep(3)
 
                 except Exception as e:
                     logger.error(f"Scan error: {e}\n{traceback.format_exc()}")

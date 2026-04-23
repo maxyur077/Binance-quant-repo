@@ -21,6 +21,9 @@
         <button class="flex items-center gap-1.5 bg-white/[0.04] border border-white/[0.08] rounded-full px-4 py-[7px] text-[0.75rem] font-semibold tracking-wide text-gray-300 cursor-pointer transition-all hover:bg-white/[0.08] hover:text-white hover:-translate-y-px" id="openConfigModal">
             ⚙️ Strategy & Alerts
         </button>
+        <button id="pauseResumeBtn" onclick="togglePause()" class="flex items-center gap-1.5 bg-white/[0.04] border border-warn/30 rounded-full px-4 py-[7px] text-[0.75rem] font-semibold tracking-wide text-warn cursor-pointer transition-all hover:bg-warn/10 hover:-translate-y-px" style="display:none">
+            ⏸ Pause
+        </button>
         <button class="flex items-center gap-1.5 bg-gradient-to-r from-accent-purple/[0.15] to-accent-cyan/[0.10] border border-accent-purple/30 rounded-full px-4 py-[7px] text-[0.75rem] font-semibold tracking-wide text-accent-purple cursor-pointer transition-all hover:from-accent-purple/25 hover:to-accent-cyan/[0.18] hover:border-accent-purple/50 hover:-translate-y-px hover:shadow-[0_4px_16px_rgba(139,92,246,0.2)]" id="openTargetModal">
             🎯 <span id="targetBtnLabel">Set Target</span>
         </button>
@@ -35,8 +38,9 @@
     </div>
 </header>
 
-<section class="grid grid-cols-8 gap-3 mb-5" id="metricsRow">
+<section class="grid grid-cols-9 gap-3 mb-5" id="metricsRow">
     <div class="metric-card"><span class="metric-label">Balance</span><span class="metric-value" id="metricBalance">$--</span></div>
+    <div class="metric-card"><span class="metric-label">Live Wallet</span><span class="metric-value" id="metricLiveBalance">$--</span></div>
     <div class="metric-card"><span class="metric-label">Daily P&L</span><span class="metric-value" id="metricDailyPnl">$--</span></div>
     <div class="metric-card"><span class="metric-label">Drawdown</span><span class="metric-value" id="metricDrawdown">--%</span></div>
     <div class="metric-card"><span class="metric-label">Win Rate</span><span class="metric-value" id="metricWinRate">--%</span></div>
@@ -190,6 +194,42 @@
                 </div>
                 <input type="hidden" id="selectedMode" value="dry_run">
             </div>
+
+            <div class="mb-5 border border-white/[0.06] rounded-[12px] p-4" id="binanceConnectionPanel">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs font-bold text-gray-400 uppercase tracking-wider">Binance Connection</span>
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full" id="connDot" style="background:#4a5568"></span>
+                        <span class="text-xs text-gray-500" id="connStatus">Not Connected</span>
+                    </div>
+                </div>
+                <div id="connLiveInfo" class="hidden mb-3 text-sm text-gray-300">
+                    Wallet: <span class="font-mono font-bold text-accent-cyan" id="connBalance">$--</span>
+                    <span class="ml-2 text-[0.65rem] text-warn font-semibold" id="connTestnetBadge"></span>
+                </div>
+                <div id="connForm">
+                    <div class="grid grid-cols-2 gap-3 mb-3">
+                        <div>
+                            <label class="block text-[0.68rem] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">API Key</label>
+                            <input type="password" id="connApiKey" placeholder="Binance API Key" class="w-full bg-surface-800 border border-white/[0.06] rounded-[8px] px-3 py-2 text-xs font-mono text-gray-200 focus:outline-none focus:border-accent-cyan/50 transition-all">
+                        </div>
+                        <div>
+                            <label class="block text-[0.68rem] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">API Secret</label>
+                            <input type="password" id="connApiSecret" placeholder="Binance API Secret" class="w-full bg-surface-800 border border-white/[0.06] rounded-[8px] px-3 py-2 text-xs font-mono text-gray-200 focus:outline-none focus:border-accent-cyan/50 transition-all">
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3 mb-3">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="connTestnet" class="accent-warn">
+                            <span class="text-xs text-gray-400">Use Testnet</span>
+                        </label>
+                    </div>
+                    <button id="connSubmitBtn" onclick="connectBinance()" class="w-full py-2 rounded-[8px] text-sm font-semibold bg-gradient-to-r from-accent-cyan to-accent-blue text-white border-none cursor-pointer hover:-translate-y-px transition-all">Connect</button>
+                </div>
+                <button id="connDisconnectBtn" onclick="disconnectBinance()" class="hidden w-full py-2 rounded-[8px] text-sm font-semibold bg-loss/10 border border-loss/30 text-loss cursor-pointer hover:bg-loss/20 transition-all">Disconnect</button>
+                <p class="text-[0.65rem] text-loss mt-2 hidden" id="connError"></p>
+            </div>
+
             <div id="apiSettingsArea" class="hidden animate-fadeIn space-y-4">
                 <div>
                     <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Binance API Key</label>

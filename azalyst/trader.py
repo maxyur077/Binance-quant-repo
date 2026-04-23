@@ -4,12 +4,14 @@ import signal
 import time
 import traceback
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import Dict, List, Optional
 
-import ccxt
 import numpy as np
 import pandas as pd
 
+from azalyst.brokers.base import BaseBroker
+from azalyst.brokers.demo import DemoBroker
+from azalyst.brokers.live_binance import LiveBinanceBroker
 from azalyst.config import (
     INITIAL_BALANCE, LEVERAGE, RISK_PER_TRADE, ATR_MULT, TP_RR_RATIO,
     SL_MIN_PCT, SL_MAX_PCT, MAX_OPEN_TRADES, MAX_HOLD_SCANS,
@@ -18,7 +20,7 @@ from azalyst.config import (
     BUY, SELL, EXCLUDE_SYMBOLS, MIN_VOLUME_MA, TOP_N_COINS,
     MAX_SAME_DIRECTION, HTF_TIMEFRAME, HTF_CANDLE_LIMIT,
     HTF_EMA_FAST, HTF_EMA_SLOW,
-    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, ORDER_CAP_TIERS
 )
 from azalyst.logger import logger
 from azalyst.indicators import compute_indicators
@@ -28,18 +30,20 @@ from azalyst import db
 
 
 class LiveTrader:
-    def __init__(self, exchange: ccxt.binance, user_id: str, dry_run: bool = False):
-        self.exchange = exchange
+    def __init__(self, broker: BaseBroker, user_id: str):
+        self.broker = broker
         self.user_id = user_id
-        self.dry_run = dry_run
+        self.dry_run = not broker.is_live
         self.balance = INITIAL_BALANCE
         self.initial_balance = INITIAL_BALANCE
+        self.live_balance: Optional[float] = None
         self.open_trades: Dict[str, dict] = {}
         self.closed_trades: List[dict] = []
         self.daily_pnl = 0.0
         self.daily_start_balance = INITIAL_BALANCE
         self.scan_count = 0
         self.running = True
+        self.paused = False
         self.symbols: List[str] = []
         self.last_scan_time = None
         self.next_scan_time = None
@@ -55,7 +59,7 @@ class LiveTrader:
             "atr_mult": ATR_MULT,
             "tp_rr_ratio": TP_RR_RATIO,
             "telegram_token": TELEGRAM_BOT_TOKEN,
-            "telegram_chat_id": TELEGRAM_CHAT_ID
+            "telegram_chat_id": TELEGRAM_CHAT_ID,
         }
 
         self._load_state()
@@ -73,7 +77,8 @@ class LiveTrader:
         if not self.user_id or self.user_id == "None":
             return # Safety guard for initial startup
         try:
-            rows = db.fetch_open_trades(self.user_id)
+            current_mode = "live" if self.broker.is_live else "dry_run"
+            rows = db.fetch_open_trades(self.user_id, mode=current_mode)
             for row in rows:
                 symbol = row["symbol"]
                 self.open_trades[symbol] = {
@@ -94,11 +99,11 @@ class LiveTrader:
                     "atr": float(row.get("atr") or 0),
                 }
 
-            closed_rows = db.fetch_closed_trades(self.user_id)
+            closed_rows = db.fetch_closed_trades(self.user_id, mode=current_mode)
             self.closed_trades = closed_rows
             
             # Load historical equity curve for the chart
-            equity_rows = db.fetch_equity(self.user_id)
+            equity_rows = db.fetch_equity(self.user_id, mode=current_mode)
             self.equity_curve = equity_rows
             
             # Recalculate historical balance
@@ -109,20 +114,40 @@ class LiveTrader:
             if self.equity_curve:
                 self.balance = float(self.equity_curve[-1]["balance"])
 
-            logger.info(f"Loaded {len(self.open_trades)} open trades and restored balance to ${self.balance:.2f} for user {self.user_id}")
+            # Recalculate daily PnL based on today's closed trades
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            self.daily_pnl = sum(
+                float(row.get("pnl_usd", 0.0))
+                for row in self.closed_trades
+                if str(row.get("exit_time", "")).startswith(today_str)
+            )
+
+            # Check if paused is saved
+            paused = db.get_config(self.user_id, "paused", "false")
+            self.paused = (paused == "true")
+
+            logger.info(f"Loaded {len(self.open_trades)} open trades. Restored balance: ${self.balance:.2f}. Today's PnL: ${self.daily_pnl:.2f} for user {self.user_id}")
         except Exception as e:
             logger.error(f"Failed to load state: {e}")
 
     def _save_trade(self, trade: dict, status: str = "open"):
         """Save trade to DB with retries for network stability"""
+        current_mode = "live" if self.broker.is_live else "dry_run"
         for attempt in range(3):
             try:
                 if status == "open" and "id" not in trade:
-                    result = db.insert_trade(self.user_id, trade)
+                    result = db.insert_trade(self.user_id, trade, mode=current_mode)
                     if result:
                         trade["id"] = result["id"]
                 elif status == "open" and "id" in trade:
-                    db.update_trade_sl(self.user_id, trade["id"], trade["sl_price"])
+                    db.update_trade(self.user_id, trade["id"], {
+                        "sl_price": trade["sl_price"],
+                        "tp_price": trade["tp_price"],
+                        "max_price": trade.get("max_price", trade["entry_price"]),
+                        "min_price": trade.get("min_price", trade["entry_price"]),
+                        "scan_count": trade.get("scan_count", 0),
+                        "signal": trade.get("signal", "")
+                    })
                 elif status == "closed" and "id" in trade:
                     db.close_trade_db(
                         self.user_id,
@@ -151,9 +176,10 @@ class LiveTrader:
         }
         self.equity_curve.append(point)
 
+        current_mode = "live" if self.broker.is_live else "dry_run"
         for attempt in range(3):
             try:
-                db.insert_equity(self.user_id, point)
+                db.insert_equity(self.user_id, point, mode=current_mode)
                 return # Success
             except Exception as e:
                 if "10035" in str(e) or "non-blocking" in str(e):
@@ -167,16 +193,56 @@ class LiveTrader:
         self.daily_target_reached = False
         logger.info(f"Daily profit target set to ${target:.2f}")
 
-    def reconfigure(self, dry_run: bool, api_key: str = "", api_secret: str = ""):
-        """Dynamically update trading mode and exchange config"""
-        self.dry_run = dry_run
-        if not dry_run and api_key and api_secret:
-            self.exchange.apiKey = api_key
-            self.exchange.secret = api_secret
-            logger.info(f"Trader reconfigured to LIVE mode for user {self.user_id}")
-        else:
-            self.exchange.secret = ""
-            logger.info(f"Trader reconfigured to DRY RUN mode for user {self.user_id}")
+    def pause(self) -> None:
+        self.paused = True
+        logger.info(f"Trading paused for user {self.user_id}")
+
+    def resume(self) -> None:
+        self.paused = False
+        logger.info(f"Trading resumed for user {self.user_id}")
+
+    def _apply_order_cap(self) -> int:
+        balance = self.live_balance if (self.broker.is_live and self.live_balance is not None) else self.balance
+        for threshold, cap in ORDER_CAP_TIERS:
+            if balance <= threshold:
+                return cap
+        return self.config.get("max_open_trades", MAX_OPEN_TRADES)
+
+    def _sync_live_balance(self) -> None:
+        if not self.broker.is_live:
+            return
+        fetched = self.broker.fetch_wallet_balance()
+        if fetched is not None and fetched >= 0:
+            # If this is the first time we're syncing live balance and we have no history,
+            # use this as our starting point for all metrics.
+            if self.live_balance is None and not self.equity_curve:
+                self.balance = fetched
+                self.initial_balance = fetched
+                self.daily_start_balance = fetched
+            
+            self.live_balance = fetched
+            # Always sync main balance with live wallet in Live mode
+            self.balance = fetched
+
+    def reconfigure(self, broker: BaseBroker) -> None:
+        self.broker = broker
+        self.dry_run = not broker.is_live
+        self.live_balance = None
+        
+        # Flush current internal state
+        self.open_trades.clear()
+        self.closed_trades.clear()
+        self.equity_curve.clear()
+        self.balance = self.initial_balance
+        self.daily_pnl = 0.0
+        
+        # Reload state from database for the newly selected mode
+        self._load_state()
+        
+        if self.broker.is_live:
+            self._sync_live_balance()
+            
+        logger.info(f"Trader reconfigured to {'LIVE' if broker.is_live else 'DRY RUN'} mode for user {self.user_id}")
 
     def _refresh_config(self):
         """Fetch user-specific config from DB with retries for network stability"""
@@ -210,6 +276,10 @@ class LiveTrader:
                 if target:
                     self.daily_profit_target = float(target)
                 
+                # Re-evaluate daily target reached status
+                if self.daily_profit_target > 0 and self.daily_pnl >= self.daily_profit_target:
+                    self.daily_target_reached = True
+                
                 return # Success
             except Exception as e:
                 if "10035" in str(e) or "non-blocking" in str(e):
@@ -222,16 +292,20 @@ class LiveTrader:
         current_drawdown = (self.initial_balance - self.balance) / self.initial_balance * 100
         return {
             "balance": round(self.balance, 2),
+            "live_balance": round(self.live_balance, 2) if self.live_balance is not None else None,
             "initial_balance": round(self.initial_balance, 2),
             "daily_pnl": round(self.daily_pnl, 2),
             "drawdown_pct": round(current_drawdown, 2),
             "open_count": len(self.open_trades),
             "closed_count": len(self.closed_trades),
-            "max_trades": MAX_OPEN_TRADES,
+            "max_trades": self._apply_order_cap(),
             "last_scan": self.last_scan_time,
             "next_scan": self.next_scan_time,
             "running": self.running,
+            "paused": self.paused,
             "dry_run": self.dry_run,
+            "is_live": self.broker.is_live,
+            "testnet": getattr(self.broker, "testnet", False),
             "scan_count": self.scan_count,
             "leverage": self.config["leverage"],
             "risk_per_trade": self.config["risk_per_trade"],
@@ -242,7 +316,8 @@ class LiveTrader:
             "daily_profit_target": round(self.daily_profit_target, 2),
             "daily_target_reached": self.daily_target_reached,
             "market_state": getattr(self, "current_market_state", "medium"),
-            "scan_limit": getattr(self, "current_scan_limit", TOP_N_COINS)
+            "scan_limit": getattr(self, "current_scan_limit", TOP_N_COINS),
+            "order_cap": self._apply_order_cap(),
         }
 
     def get_open_trades(self) -> list:
@@ -283,7 +358,7 @@ class LiveTrader:
         if symbol not in self.open_trades:
             return {"error": f"{symbol} not found in open trades"}
         try:
-            ticker = self.exchange.fetch_ticker(symbol)
+            ticker = self.broker.fetch_ticker(symbol)
             current_price = ticker["last"]
             self.close_trade(symbol, current_price, "MANUAL_EXIT")
             return {"success": True, "symbol": symbol, "exit_price": current_price}
@@ -325,7 +400,7 @@ class LiveTrader:
         logger.info(f"Refreshing top {scan_limit} coins from Binance...")
 
         logger.info("Loading markets from Binance...")
-        markets = self.exchange.load_markets()
+        markets = self.broker.load_markets()
 
         usdt_symbols = [
             s for s, m in markets.items()
@@ -339,7 +414,7 @@ class LiveTrader:
             if full_name not in EXCLUDE_SYMBOLS and base not in EXCLUDE_SYMBOLS:
                 filtered.append(s)
 
-        all_tickers = self.exchange.fetch_tickers()
+        all_tickers = self.broker.fetch_tickers()
 
         volume_ranked = []
         for symbol in filtered:
@@ -358,13 +433,10 @@ class LiveTrader:
         if len(self.symbols) > 5:
             logger.info(f"  ... and {len(self.symbols) - 5} more")
 
-        if not self.dry_run:
+        if self.broker.is_live:
             logger.info("Setting leverage...")
             for symbol in self.symbols:
-                try:
-                    self.exchange.set_leverage(LEVERAGE, symbol)
-                except Exception as e:
-                    logger.warn(f"Failed to set leverage for {symbol}: {e}")
+                self.broker.set_leverage(symbol, LEVERAGE)
 
         logger.info(f"Symbol refresh complete. Actively tracking {len(self.symbols)} symbols...")
 
@@ -393,7 +465,7 @@ class LiveTrader:
     def fetch_ohlcv(self, symbol: str, tf: str = "15m", limit: int = 250) -> pd.DataFrame:
         for attempt in range(3):
             try:
-                ohlcv = self.exchange.fetch_ohlcv(symbol, tf, limit=limit)
+                ohlcv = self.broker.fetch_ohlcv(symbol, tf, limit)
                 df = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
                 df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
                 df.set_index("timestamp", inplace=True)
@@ -418,6 +490,10 @@ class LiveTrader:
         return True
 
     def scan_and_trade(self):
+        if self.paused:
+            logger.info("Trading is paused. Skipping scan.")
+            return
+
         if not self.check_prop_firm_limits():
             return
 
@@ -432,8 +508,9 @@ class LiveTrader:
                 )
             return
 
-        if len(self.open_trades) >= MAX_OPEN_TRADES:
-            logger.info(f"Max trades reached ({len(self.open_trades)}). Skipping scan.")
+        effective_cap = self._apply_order_cap()
+        if len(self.open_trades) >= effective_cap:
+            logger.info(f"Order cap reached ({len(self.open_trades)}/{effective_cap}). Skipping scan.")
             return
 
         logger.info(f"Scanning {len(self.symbols)} symbols... ({len(self.open_trades)}/{MAX_OPEN_TRADES} open)")
@@ -579,13 +656,10 @@ class LiveTrader:
             "extended": False,
         }
 
-        if not self.dry_run:
+        if self.broker.is_live:
             try:
-                if direction == BUY:
-                    self.exchange.create_market_order(symbol, "buy", qty)
-                else:
-                    self.exchange.create_market_order(symbol, "sell", qty)
-
+                side = "buy" if direction == BUY else "sell"
+                self.broker.place_market_order(symbol, side, qty)
                 logger.trade(f"OPENED: {symbol} {'LONG' if direction == BUY else 'SHORT'} @ ${fill_price:.4f} | "
                              f"SL: ${sl_price:.4f} | TP: ${tp_price:.4f} | Qty: {qty:.4f}")
             except Exception as e:
@@ -632,7 +706,7 @@ class LiveTrader:
                 trade["scan_count"] += 1
 
             try:
-                ticker = self.exchange.fetch_ticker(symbol)
+                ticker = self.broker.fetch_ticker(symbol)
                 current_price = ticker["last"]
                 self._live_prices[symbol] = current_price
             except Exception as e:
@@ -815,12 +889,10 @@ class LiveTrader:
         trade["pnl_usd"] = pnl_usd
         trade["reason"] = reason
 
-        if not self.dry_run:
+        if self.broker.is_live:
             try:
-                if direction == BUY:
-                    self.exchange.create_market_order(symbol, "sell", qty)
-                else:
-                    self.exchange.create_market_order(symbol, "buy", qty)
+                side = "sell" if direction == BUY else "buy"
+                self.broker.place_market_order(symbol, side, qty)
             except Exception as e:
                 logger.error(f"Failed to close {symbol}: {e}")
 
@@ -886,17 +958,17 @@ class LiveTrader:
 
     def run(self):
         try:
-            self.initialize()
+            self._load_state()
+            self._refresh_config()
 
             logger.info("\nStarting live trading loop...")
             logger.info("Press Ctrl+C to stop\n")
 
             while self.running:
                 try:
-                    # Refresh config only during the main scan to reduce network load
                     self._refresh_config()
-                    
-                    now = datetime.now(timezone.utc)
+                    self._sync_live_balance()
+
                     if time.time() - self.last_symbol_refresh_time >= 4 * 3600:
                         self._refresh_top_coins()
 
@@ -912,10 +984,13 @@ class LiveTrader:
 
                     logger.info(f"Next scan in {SCAN_INTERVAL_MIN} minutes...")
                     loops = (SCAN_INTERVAL_MIN * 60) // 2
-                    for _ in range(loops):
+                    for i in range(loops):
                         if not self.running:
                             break
                         try:
+                            # Sync balance every 60 seconds (30 * 2s)
+                            if i > 0 and i % 30 == 0:
+                                self._sync_live_balance()
                             self.manage_open_trades(main_scan=False)
                         except Exception as e:
                             logger.error(f"Error managing trades: {e}")
@@ -929,7 +1004,7 @@ class LiveTrader:
 
             for symbol in list(self.open_trades.keys()):
                 try:
-                    ticker = self.exchange.fetch_ticker(symbol)
+                    ticker = self.broker.fetch_ticker(symbol)
                     self.close_trade(symbol, ticker["last"], "MANUAL_STOP")
                 except Exception as e:
                     logger.error(f"Failed to close {symbol}: {e}")

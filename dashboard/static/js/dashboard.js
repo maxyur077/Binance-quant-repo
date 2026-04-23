@@ -116,18 +116,15 @@
     function selectMode(mode) {
         var dryBtn = $("setModeDry");
         var liveBtn = $("setModeLive");
-        var apiArea = $("apiSettingsArea");
         var input = $("selectedMode");
 
         input.value = mode;
         if (mode === "live") {
             liveBtn.className = "py-2.5 rounded-[10px] text-sm font-semibold border border-accent-cyan transition-all cursor-pointer bg-accent-cyan/10 text-accent-cyan";
             dryBtn.className = "py-2.5 rounded-[10px] text-sm font-semibold border border-white/[0.12] transition-all cursor-pointer bg-white/[0.04] text-gray-400";
-            apiArea.classList.remove("hidden");
         } else {
             dryBtn.className = "py-2.5 rounded-[10px] text-sm font-semibold border border-warn transition-all cursor-pointer bg-warn/10 text-warn";
             liveBtn.className = "py-2.5 rounded-[10px] text-sm font-semibold border border-white/[0.12] transition-all cursor-pointer bg-white/[0.04] text-gray-400";
-            apiArea.classList.add("hidden");
         }
     }
 
@@ -144,6 +141,119 @@
     }
     
     window.togglePassword = togglePassword;
+
+    async function togglePause() {
+        var btn = $("pauseResumeBtn");
+        var isPaused = btn.textContent.includes("Resume");
+        btn.disabled = true;
+        
+        var url = isPaused ? "/api/trading/resume" : "/api/trading/pause";
+        var res = await postJSON(url, {});
+        
+        if (res && res.success) {
+            refresh();
+        } else {
+            alert("Failed to " + (isPaused ? "resume" : "pause") + " trading.");
+        }
+        btn.disabled = false;
+    }
+    window.togglePause = togglePause;
+
+    async function connectBinance() {
+        var apiKey = $("connApiKey").value.trim();
+        var apiSecret = $("connApiSecret").value.trim();
+        var testnet = $("connTestnet").checked;
+        var btn = $("connSubmitBtn");
+        var err = $("connError");
+
+        if (!apiKey || !apiSecret) {
+            err.textContent = "API Key and Secret are required.";
+            err.classList.remove("hidden");
+            return;
+        }
+
+        err.classList.add("hidden");
+        btn.disabled = true;
+        btn.textContent = "Connecting...";
+
+        var res = await postJSON("/api/broker/connect", {
+            api_key: apiKey,
+            api_secret: apiSecret,
+            testnet: testnet
+        });
+
+        btn.disabled = false;
+        btn.textContent = "Connect";
+
+        if (res && res.success) {
+            $("connApiKey").value = "";
+            $("connApiSecret").value = "";
+            refreshBrokerStatus();
+            refresh();
+        } else {
+            err.textContent = res ? res.error : "Connection failed.";
+            if (res && res.detail) err.textContent += " (" + res.detail + ")";
+            err.classList.remove("hidden");
+        }
+    }
+    window.connectBinance = connectBinance;
+
+    async function disconnectBinance() {
+        if (!confirm("Disconnect Binance? You will be switched to Dry Run mode.")) return;
+        
+        var btn = $("connDisconnectBtn");
+        btn.disabled = true;
+        btn.textContent = "Disconnecting...";
+
+        var res = await postJSON("/api/broker/disconnect", {});
+        
+        btn.disabled = false;
+        btn.textContent = "Disconnect";
+
+        if (res && res.success) {
+            refreshBrokerStatus();
+            refresh();
+        } else {
+            alert("Failed to disconnect.");
+        }
+    }
+    window.disconnectBinance = disconnectBinance;
+
+    async function refreshBrokerStatus() {
+        var res = await fetchJSON("/api/broker/status");
+        if (!res) return;
+
+        var dot = $("connDot");
+        var status = $("connStatus");
+        var info = $("connLiveInfo");
+        var bal = $("connBalance");
+        var badge = $("connTestnetBadge");
+        var form = $("connForm");
+        var disBtn = $("connDisconnectBtn");
+
+        if (res.is_live) {
+            dot.style.background = "#10b981"; // profit
+            status.textContent = "Connected";
+            status.style.color = "#10b981";
+            form.classList.add("hidden");
+            disBtn.classList.remove("hidden");
+            info.classList.remove("hidden");
+            bal.textContent = formatUSD(res.live_balance || 0);
+            if (res.testnet) {
+                badge.textContent = "TESTNET";
+            } else {
+                badge.textContent = "";
+            }
+        } else {
+            dot.style.background = "#4a5568";
+            status.textContent = "Not Connected";
+            status.style.color = "#9ca3af";
+            form.classList.remove("hidden");
+            disBtn.classList.add("hidden");
+            info.classList.add("hidden");
+        }
+    }
+
 
     function setupConfigModal() {
         var overlay = $("configModalOverlay");
@@ -243,10 +353,13 @@
         function openModal() {
             overlay.classList.add("visible");
             error.classList.add("hidden");
-            // Highlight current mode based on label text
             var currentMode = $("modeLabel").textContent.trim();
-            if (currentMode === "LIVE") selectMode("live");
-            else selectMode("dry_run");
+            if (currentMode.includes("LIVE") || currentMode.includes("PAUSED")) {
+                selectMode("live");
+            } else {
+                selectMode("dry_run");
+            }
+            refreshBrokerStatus();
         }
         function closeModal() { overlay.classList.remove("visible"); }
 
@@ -257,22 +370,14 @@
 
         saveBtn.addEventListener("click", async function () {
             var mode = $("selectedMode").value;
-            var apiKey = $("settingsApiKey").value;
-            var apiSecret = $("settingsApiSecret").value;
-
-            if (mode === "live" && (!apiKey || !apiSecret)) {
-                error.textContent = "API Key and Secret are required for Live mode.";
-                error.classList.remove("hidden");
-                return;
-            }
 
             saveBtn.disabled = true;
             saveBtn.textContent = "Applying...";
             
             var res = await postJSON("/api/settings/mode", {
                 mode: mode,
-                api_key: apiKey,
-                api_secret: api_secret
+                api_key: "",
+                api_secret: ""
             });
 
             saveBtn.disabled = false;
@@ -323,6 +428,14 @@
         $("metricBalance").textContent = "$" + parseFloat(data.balance).toLocaleString("en-US", { minimumFractionDigits: 2 });
         $("metricBalance").className = "metric-value";
 
+        if (data.live_balance !== null && data.live_balance !== undefined) {
+            $("metricLiveBalance").textContent = formatUSD(data.live_balance);
+            $("metricLiveBalance").className = "metric-value text-accent-cyan";
+        } else {
+            $("metricLiveBalance").textContent = "N/A";
+            $("metricLiveBalance").className = "metric-value text-gray-500";
+        }
+
         var dpnl = parseFloat(data.daily_pnl);
         $("metricDailyPnl").textContent = formatUSD(dpnl);
         $("metricDailyPnl").className = "metric-value " + metricClass(dpnl);
@@ -337,31 +450,47 @@
         $("metricDrawdown").textContent = dd.toFixed(2) + "%";
         $("metricDrawdown").className = "metric-value " + (dd > 20 ? "negative" : "");
 
-        $("metricOpenCount").textContent = data.open_count + "/" + data.max_trades;
+        $("metricOpenCount").textContent = data.open_count + "/" + (data.order_cap || data.max_trades);
         $("metricClosedCount").textContent = data.closed_count;
         $("metricLeverage").textContent = data.leverage + "x";
         $("metricRisk").textContent = (data.risk_per_trade * 100).toFixed(0) + "%";
 
-        var pill = $("openSettingsModal"); // Updated from statusPill
+        var pill = $("openSettingsModal"); 
         var label = $("modeLabel");
         var dot = $("statusDot");
         var statusText = "Scanning " + data.scan_limit;
 
-        if (data.daily_target_reached) {
+        var pauseBtn = $("pauseResumeBtn");
+        pauseBtn.style.display = "flex";
+        if (data.paused) {
+            pauseBtn.innerHTML = "▶️ Resume";
+            pauseBtn.className = "flex items-center gap-1.5 bg-white/[0.04] border border-profit/30 rounded-full px-4 py-[7px] text-[0.75rem] font-semibold tracking-wide text-profit cursor-pointer transition-all hover:bg-profit/10 hover:-translate-y-px";
+            
             pill.className = "flex items-center gap-2 bg-surface-700 border border-warn/30 rounded-full px-4 py-1.5 text-[0.75rem] font-semibold tracking-wider text-warn cursor-pointer hover:bg-surface-600 transition-all hover:border-white/20";
             dot.className = "w-2 h-2 rounded-full bg-warn";
-            dot.style.animation = "pulse-anim 2s ease-in-out infinite";
-            label.textContent = "TARGET MET | " + statusText;
-        } else if (data.dry_run) {
-            pill.className = "flex items-center gap-2 bg-surface-700 border border-warn/30 rounded-full px-4 py-1.5 text-[0.75rem] font-semibold tracking-wider text-warn cursor-pointer hover:bg-surface-600 transition-all hover:border-white/20";
-            dot.className = "w-2 h-2 rounded-full bg-warn";
-            dot.style.animation = "pulse-anim 2s ease-in-out infinite";
-            label.textContent = "DRY RUN | " + statusText;
+            dot.style.animation = "none";
+            label.textContent = "PAUSED";
         } else {
-            pill.className = "flex items-center gap-2 bg-surface-700 border border-profit/30 rounded-full px-4 py-1.5 text-[0.75rem] font-semibold tracking-wider text-profit cursor-pointer hover:bg-surface-600 transition-all hover:border-white/20";
-            dot.className = "w-2 h-2 rounded-full bg-profit";
-            dot.style.animation = "pulse-anim 2s ease-in-out infinite";
-            label.textContent = "LIVE | " + statusText;
+            pauseBtn.innerHTML = "⏸ Pause";
+            pauseBtn.className = "flex items-center gap-1.5 bg-white/[0.04] border border-warn/30 rounded-full px-4 py-[7px] text-[0.75rem] font-semibold tracking-wide text-warn cursor-pointer transition-all hover:bg-warn/10 hover:-translate-y-px";
+            
+            var modeStr = data.dry_run ? "DRY RUN | " : (data.testnet ? "TESTNET | " : "LIVE | ");
+            if (data.daily_target_reached) {
+                pill.className = "flex items-center gap-2 bg-surface-700 border border-warn/30 rounded-full px-4 py-1.5 text-[0.75rem] font-semibold tracking-wider text-warn cursor-pointer hover:bg-surface-600 transition-all hover:border-white/20";
+                dot.className = "w-2 h-2 rounded-full bg-warn";
+                dot.style.animation = "pulse-anim 2s ease-in-out infinite";
+                label.textContent = modeStr + "TARGET MET | " + statusText;
+            } else if (data.dry_run) {
+                pill.className = "flex items-center gap-2 bg-surface-700 border border-warn/30 rounded-full px-4 py-1.5 text-[0.75rem] font-semibold tracking-wider text-warn cursor-pointer hover:bg-surface-600 transition-all hover:border-white/20";
+                dot.className = "w-2 h-2 rounded-full bg-warn";
+                dot.style.animation = "pulse-anim 2s ease-in-out infinite";
+                label.textContent = modeStr + statusText;
+            } else {
+                pill.className = "flex items-center gap-2 bg-surface-700 border border-profit/30 rounded-full px-4 py-1.5 text-[0.75rem] font-semibold tracking-wider text-profit cursor-pointer hover:bg-surface-600 transition-all hover:border-white/20";
+                dot.className = "w-2 h-2 rounded-full bg-profit";
+                dot.style.animation = "pulse-anim 2s ease-in-out infinite";
+                label.textContent = modeStr + statusText;
+            }
         }
 
         nextScanISO = data.next_scan;

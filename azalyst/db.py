@@ -18,10 +18,11 @@ def get_client() -> Client:
     return _client
 
 
-def insert_trade(user_id: str, trade: dict) -> dict:
+def insert_trade(user_id: str, trade: dict, mode: str = "dry_run") -> dict:
     client = get_client()
     row = {
         "user_id": user_id,
+        "mode": mode,
         "symbol": trade["symbol"],
         "direction": trade["direction"],
         "entry_price": trade["entry_price"],
@@ -67,22 +68,23 @@ def close_trade_db(user_id: str, trade_id: int, exit_time: str, exit_price: floa
     }).eq("id", trade_id).eq("user_id", user_id).execute()
 
 
-def fetch_open_trades(user_id: str) -> list:
+def fetch_open_trades(user_id: str, mode: str = "dry_run") -> list:
     client = get_client()
-    result = client.table("trades").select("*").eq("status", "open").eq("user_id", user_id).execute()
+    result = client.table("trades").select("*").eq("status", "open").eq("user_id", user_id).eq("mode", mode).execute()
     return result.data or []
 
 
-def fetch_closed_trades(user_id: str) -> list:
+def fetch_closed_trades(user_id: str, mode: str = "dry_run") -> list:
     client = get_client()
-    result = client.table("trades").select("*").eq("status", "closed").eq("user_id", user_id).order("exit_time", desc=False).execute()
+    result = client.table("trades").select("*").eq("status", "closed").eq("user_id", user_id).eq("mode", mode).order("exit_time", desc=False).execute()
     return result.data or []
 
 
-def insert_equity(user_id: str, point: dict) -> None:
+def insert_equity(user_id: str, point: dict, mode: str = "dry_run") -> None:
     client = get_client()
     client.table("equity_log").insert({
         "user_id": user_id,
+        "mode": mode,
         "timestamp": point["timestamp"],
         "balance": point["balance"],
         "open_trades": point["open_trades"],
@@ -90,24 +92,78 @@ def insert_equity(user_id: str, point: dict) -> None:
     }).execute()
 
 
-def fetch_equity(user_id: str) -> list:
+def fetch_equity(user_id: str, mode: str = "dry_run") -> list:
     client = get_client()
-    result = client.table("equity_log").select("*").eq("user_id", user_id).order("timestamp").execute()
+    result = client.table("equity_log").select("*").eq("user_id", user_id).eq("mode", mode).order("timestamp").execute()
     return result.data or []
 
 
 def upsert_config(user_id: str, key: str, value: str) -> None:
     client = get_client()
-    client.table("bot_config").upsert({
-        "user_id": user_id,
-        "key": key,
-        "value": value,
-    }, on_conflict="user_id,key").execute()
+    client.table("bot_config").upsert(
+        {"user_id": user_id, "key": key, "value": value},
+        on_conflict="user_id,key"
+    ).execute()
 
 
-def get_config(user_id: str, key: str, default: str = "") -> str:
+def get_config(user_id: str, key: str, default=None):
     client = get_client()
-    result = client.table("bot_config").select("value").eq("key", key).eq("user_id", user_id).execute()
+    result = client.table("bot_config").select("value").eq("user_id", user_id).eq("key", key).limit(1).execute()
     if result.data:
         return result.data[0]["value"]
     return default
+
+
+def upsert_wallet_snapshot(user_id: str, balance: float, source: str = "binance") -> None:
+    client = get_client()
+    client.table("wallet_snapshots").insert({
+        "user_id": user_id,
+        "balance": balance,
+        "source": source,
+    }).execute()
+
+
+def fetch_wallet_snapshots(user_id: str, limit: int = 100) -> list:
+    client = get_client()
+    result = (
+        client.table("wallet_snapshots")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("timestamp", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return result.data or []
+
+
+def insert_binance_trades(user_id: str, trades: list) -> None:
+    client = get_client()
+    rows = []
+    for t in trades:
+        rows.append({
+            "user_id": user_id,
+            "order_id": str(t.get("id", "")),
+            "symbol": t.get("symbol", ""),
+            "side": t.get("side", ""),
+            "qty": float(t.get("amount", 0) or 0),
+            "price": float(t.get("price", 0) or 0),
+            "realized_pnl": float(t.get("info", {}).get("realizedPnl", 0) or 0),
+            "commission": float(t.get("fee", {}).get("cost", 0) or 0),
+            "commission_asset": t.get("fee", {}).get("currency", ""),
+            "trade_time": t.get("datetime", ""),
+        })
+    if rows:
+        client.table("binance_trades").upsert(rows, on_conflict="user_id,order_id").execute()
+
+
+def fetch_binance_trades(user_id: str, limit: int = 100) -> list:
+    client = get_client()
+    result = (
+        client.table("binance_trades")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("trade_time", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return result.data or []

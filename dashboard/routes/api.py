@@ -111,16 +111,71 @@ def api_change_mode():
         
     # Save to DB
     supabase_db.upsert_config(user_id, "trading_mode", mode)
-    if mode == "live":
-        if not api_key or not api_secret:
-            return jsonify({"error": "API Key and Secret required for Live mode"}), 400
-        supabase_db.upsert_config(user_id, "binance_api_key", api_key)
-        supabase_db.upsert_config(user_id, "binance_api_secret", api_secret)
-        
-    # Reconfigure trader memory
-    _trader_instance.reconfigure(dry_run=(mode == "dry_run"), api_key=api_key, api_secret=api_secret)
     
+    if mode == "live":
+        # Load existing keys from DB if none provided
+        if not api_key:
+            from azalyst.crypto import decrypt
+            api_key = decrypt(supabase_db.get_config(user_id, "binance_api_key", ""))
+        if not api_secret:
+            from azalyst.crypto import decrypt
+            api_secret = decrypt(supabase_db.get_config(user_id, "binance_api_secret", ""))
+            
+        if not api_key or not api_secret:
+            return jsonify({"error": "Please connect to Binance first to use Live mode."}), 400
+            
+        testnet = supabase_db.get_config(user_id, "binance_testnet", "false") == "true"
+        
+        try:
+            from azalyst.brokers.live_binance import LiveBinanceBroker
+            broker = LiveBinanceBroker(api_key, api_secret, testnet=testnet)
+            # Validate connection briefly
+            val = broker.validate_connection()
+            if not val.get("success"):
+                return jsonify({"error": "Failed to connect to Live Binance. " + val.get("error", "")}), 400
+            _trader_instance.reconfigure(broker)
+        except Exception as e:
+            return jsonify({"error": f"Failed to configure Live Binance: {e}"}), 400
+    else:
+        _trader_instance.reconfigure(
+            __import__("azalyst.brokers.demo", fromlist=["DemoBroker"]).DemoBroker(
+                __import__("ccxt").binanceusdm({"enableRateLimit": True})
+            )
+        )
+
     return jsonify({"success": True, "mode": mode})
+
+
+@api_bp.route("/api/trading/pause", methods=["POST"])
+@login_required
+def api_pause():
+    if not _verify_user():
+        return jsonify({"error": "Unauthorized"}), 403
+    _trader_instance.pause()
+    supabase_db.upsert_config(_trader_instance.user_id, "paused", "true")
+    return jsonify({"success": True, "paused": True})
+
+
+@api_bp.route("/api/trading/resume", methods=["POST"])
+@login_required
+def api_resume():
+    if not _verify_user():
+        return jsonify({"error": "Unauthorized"}), 403
+    _trader_instance.resume()
+    supabase_db.upsert_config(_trader_instance.user_id, "paused", "false")
+    return jsonify({"success": True, "paused": False})
+
+
+@api_bp.route("/api/wallet", methods=["GET"])
+@login_required
+def api_wallet():
+    if not _verify_user():
+        return jsonify({"error": "Unauthorized"}), 403
+    return jsonify({
+        "virtual_balance": round(_trader_instance.balance, 2),
+        "live_balance": round(_trader_instance.live_balance, 2) if _trader_instance.live_balance is not None else None,
+        "is_live": _trader_instance.broker.is_live,
+    })
 
 
 @api_bp.route("/api/config/defaults", methods=["GET"])

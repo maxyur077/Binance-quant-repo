@@ -15,7 +15,7 @@ INITIAL_BALANCE = 100.0
 LEVERAGE = 15
 RISK_PER_TRADE = 0.07          # Restored to 2.0% for 'Big Profit' windows
 ATR_MULT = 1.4
-TP_RR_RATIO = 2             
+TP_RR_RATIO = 1.7           
 SL_MIN_PCT = 0.01
 SL_MAX_PCT = 0.05
 MAX_OPEN_TRADES = 10
@@ -73,3 +73,9 @@ EXCLUDE_SYMBOLS = {
 }
 MIN_VOLUME_MA = 70000
 TOP_N_COINS = 20
+
+ORDER_CAP_TIERS = [
+    (30,   2),
+    (100,  5),
+    (500, 10),
+]

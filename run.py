@@ -7,10 +7,32 @@ import sys
 from dotenv import load_dotenv
 import ccxt
 
+from azalyst.brokers.demo import DemoBroker
+from azalyst.brokers.live_binance import LiveBinanceBroker
 from azalyst.config import LEVERAGE
 from azalyst.logger import logger
 from azalyst.trader import LiveTrader
 from azalyst import db
+
+
+def _resolve_api_keys(user_id: str):
+    raw_key = db.get_config(user_id, "binance_api_key", "")
+    raw_secret = db.get_config(user_id, "binance_api_secret", "")
+    encrypted = db.get_config(user_id, "keys_encrypted", "false") == "true"
+
+    if encrypted and raw_key and raw_secret:
+        from azalyst import crypto
+        try:
+            return crypto.decrypt(raw_key), crypto.decrypt(raw_secret)
+        except Exception as exc:
+            logger.error(f"Failed to decrypt API keys: {exc}")
+            return "", ""
+
+    return raw_key or os.getenv("BINANCE_API_KEY", ""), raw_secret or os.getenv("BINANCE_API_SECRET", "")
+
+
+def _build_data_exchange() -> ccxt.binanceusdm:
+    return ccxt.binanceusdm({"enableRateLimit": True})
 
 
 def main():
@@ -20,19 +42,16 @@ def main():
     parser.add_argument("--dashboard", action="store_true", default=True, help="Launch web dashboard")
     parser.add_argument("--no-dashboard", action="store_true", help="Disable web dashboard")
     parser.add_argument("--port", type=int, default=8080, help="Dashboard port")
-
     args = parser.parse_args()
 
-    # Find the active user (the one who has setup the bot)
-    # If no user set, we wait for a dashboard setup
     active_user_id = None
     client = db.get_client()
     try:
         res = client.table("bot_config").select("user_id").eq("key", "trading_mode").limit(1).execute()
         if res.data:
             active_user_id = res.data[0].get("user_id")
-    except Exception as e:
-         logger.error(f"Failed to check bot configuration: {e}")
+    except Exception as exc:
+        logger.error(f"Failed to check bot configuration: {exc}")
 
     trading_mode = ""
     if active_user_id:
@@ -41,38 +60,29 @@ def main():
     if args.dry_run:
         trading_mode = "dry_run"
 
-    exchange_config = {
-        "enableRateLimit": True,
-        "options": {
-            "defaultType": "future",
-        },
-    }
-
-    dry_run = True
-    if trading_mode == "live" and active_user_id:
-        api_key = db.get_config(active_user_id, "binance_api_key", os.getenv("BINANCE_API_KEY", ""))
-        api_secret = db.get_config(active_user_id, "binance_api_secret", os.getenv("BINANCE_API_SECRET", ""))
+    if trading_mode == "live" and active_user_id and not args.dry_run:
+        api_key, api_secret = _resolve_api_keys(active_user_id)
+        testnet = db.get_config(active_user_id, "binance_testnet", "false") == "true"
         if api_key and api_secret:
-            exchange_config["apiKey"] = api_key
-            exchange_config["secret"] = api_secret
-            dry_run = False
-            logger.info(f"Operating in LIVE TRADING mode for user {active_user_id}")
+            broker = LiveBinanceBroker(api_key=api_key, api_secret=api_secret, testnet=testnet)
+            logger.info(f"Operating in LIVE {'TESTNET ' if testnet else ''}TRADING mode for user {active_user_id}")
         else:
-            logger.warn("Live mode selected but no API keys found. Falling back to dry run.")
-    elif trading_mode == "dry_run" and active_user_id:
-        logger.info(f"Operating in Signal-Only Mode for user {active_user_id}")
+            logger.warning("Live mode configured but no API keys found. Falling back to demo mode.")
+            broker = DemoBroker(_build_data_exchange())
     else:
-        logger.info("No active user configuration found. Bot will wait for setup via dashboard.")
+        broker = DemoBroker(_build_data_exchange())
+        if trading_mode == "dry_run" and active_user_id:
+            logger.info(f"Operating in Demo (Dry Run) mode for user {active_user_id}")
+        else:
+            logger.info("No active user configuration found. Waiting for setup via dashboard.")
 
-    exchange = ccxt.binance(exchange_config)
-    # We pass None for user_id initially if not found, it will be set during reconfigure/setup
-    trader = LiveTrader(exchange, user_id=active_user_id, dry_run=dry_run)
+    trader = LiveTrader(broker=broker, user_id=active_user_id)
 
     if args.dashboard and not args.no_dashboard:
         from dashboard.server import start_dashboard
         start_dashboard(trader, port=args.port)
         if not trading_mode:
-            logger.info(f"Open http://localhost:{args.port}/auth/signup to create an account and select trading mode")
+            logger.info(f"Open http://localhost:{args.port}/auth/signup to create an account")
         else:
             logger.info(f"Dashboard running at http://localhost:{args.port}")
 
@@ -81,10 +91,7 @@ def main():
         import time
         while not trader.user_id or not db.get_config(trader.user_id, "trading_mode", ""):
             time.sleep(2)
-        
-        # After setup, re-detect settings
         trading_mode = db.get_config(trader.user_id, "trading_mode", "")
-        # The reconfigure method will handle the actual exchange/dry_run update
         logger.info(f"Configuration received for user {trader.user_id}. Starting trader...")
 
     trader.run()

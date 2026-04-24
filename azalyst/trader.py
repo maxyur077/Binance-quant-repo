@@ -686,9 +686,9 @@ class LiveTrader:
                 # 1. Place Entry
                 self.broker.place_market_order(symbol, side, qty)
                 
-                # 2. Place Real TP/SL on Exchange
-                exit_side = "sell" if side == "buy" else "buy"
-                self.broker.place_sl_tp(symbol, exit_side, qty, sl_price, tp_price)
+                # 2. Place Real TP/SL on Exchange (Commented out per user request)
+                # exit_side = "sell" if side == "buy" else "buy"
+                # self.broker.place_sl_tp(symbol, exit_side, qty, sl_price, tp_price)
 
                 logger.trade(f"OPENED: {symbol} {'LONG' if direction == BUY else 'SHORT'} @ ${fill_price:.4f} | "
                              f"SL: ${sl_price:.4f} | TP: ${tp_price:.4f} | Qty: {qty:.4f}")
@@ -751,21 +751,26 @@ class LiveTrader:
             tp = trade["tp_price"]
             entry = trade["entry_price"]
 
-            # --- SMART TRAILING PROTECTION (Lock-in Profit) ---
-            # Wait for 3.0% profit before moving SL to 'Safe Profit' (+0.2%)
+            # --- DYNAMIC TRAILING PROTECTION (Follow the Price) ---
+            # Trigger: 3.0% profit. Trail Distance: 2.0%
+            TRAIL_TRIGGER = 0.030
+            TRAIL_DIST = 0.020
+            
             pnl_move = (current_price - entry) / entry
             if direction == BUY:
-                # Move SL to Entry + 0.2% (Lock in tiny profit)
-                safe_profit_sl = entry * 1.0020 
-                if pnl_move >= 0.030 and trade["sl_price"] < safe_profit_sl:
-                    trade["sl_price"] = safe_profit_sl
-                    logger.info(f"   [PROTECT] {symbol} moved to Safe Profit (3.0% reached)")
+                if pnl_move >= TRAIL_TRIGGER:
+                    # SL follows at TRAIL_DIST (2%) below the highest price reached
+                    new_sl = trade["max_price"] * (1 - TRAIL_DIST)
+                    if new_sl > trade["sl_price"]:
+                        trade["sl_price"] = new_sl
+                        logger.info(f"   [TRAIL] {symbol} SL followed up to ${new_sl:.4f}")
             else:
-                # Move SL to Entry - 0.2% (Lock in tiny profit) for Shorts
-                safe_profit_sl = entry * 0.9980
-                if pnl_move <= -0.030 and trade["sl_price"] > safe_profit_sl:
-                    trade["sl_price"] = safe_profit_sl
-                    logger.info(f"   [PROTECT] {symbol} moved to Safe Profit (3.0% reached)")
+                if pnl_move <= -TRAIL_TRIGGER:
+                    # SL follows at TRAIL_DIST (2%) above the lowest price reached
+                    new_sl = trade["min_price"] * (1 + TRAIL_DIST)
+                    if new_sl < trade["sl_price"]:
+                        trade["sl_price"] = new_sl
+                        logger.info(f"   [TRAIL] {symbol} SL followed down to ${new_sl:.4f}")
 
             closed = False
             exit_price = None

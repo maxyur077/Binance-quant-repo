@@ -97,18 +97,20 @@ class LiveBinanceBroker(BaseBroker):
     def place_sl_tp(self, symbol: str, side: str, qty: float, sl_price: float, tp_price: float) -> dict:
         """
         Place real Stop Loss and Take Profit orders on Binance Futures.
-        Uses 'reduceOnly' to ensure these orders only close the position.
+        Uses 'STOP' and 'TAKE_PROFIT' which are widely supported 'Algo Orders'.
         """
         results = {"sl": None, "tp": None}
         try:
-            # 1. Place Stop Loss (Stop Market)
+            # 1. Place Stop Loss
+            # For Binance Futures, 'STOP' with stopPrice is the safest 'Algo' way
             results["sl"] = self._exchange.create_order(
                 symbol=symbol,
-                type="STOP_MARKET",
+                type="STOP",
                 side=side,
                 amount=qty,
+                price=sl_price, # Limit price
                 params={
-                    "stopPrice": sl_price,
+                    "stopPrice": sl_price, # Trigger price
                     "reduceOnly": True,
                     "workingType": "MARK_PRICE"
                 }
@@ -118,14 +120,15 @@ class LiveBinanceBroker(BaseBroker):
             logger.error(f"❌ Failed to place Real SL for {symbol}: {e}")
 
         try:
-            # 2. Place Take Profit (Take Profit Market)
+            # 2. Place Take Profit
             results["tp"] = self._exchange.create_order(
                 symbol=symbol,
-                type="TAKE_PROFIT_MARKET",
+                type="TAKE_PROFIT",
                 side=side,
                 amount=qty,
+                price=tp_price, # Limit price
                 params={
-                    "stopPrice": tp_price,
+                    "stopPrice": tp_price, # Trigger price
                     "reduceOnly": True,
                     "workingType": "MARK_PRICE"
                 }

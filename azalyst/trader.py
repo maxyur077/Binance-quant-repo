@@ -20,7 +20,8 @@ from azalyst.config import (
     BUY, SELL, EXCLUDE_SYMBOLS, MIN_VOLUME_MA, TOP_N_COINS,
     MAX_SAME_DIRECTION, HTF_TIMEFRAME, HTF_CANDLE_LIMIT,
     HTF_EMA_FAST, HTF_EMA_SLOW,
-    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, ORDER_CAP_TIERS
+    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, ORDER_CAP_TIERS,
+    TRAILING_STOP_ENABLED
 )
 from azalyst.logger import logger
 from azalyst.indicators import compute_indicators
@@ -644,14 +645,23 @@ class LiveTrader:
             tp1 = tp_price
             tp2 = None
 
-        # --- FINAL NAN GUARD (Direction-Aware Safety) ---
+        # --- FINAL SL/TP SAFETY CAP (Enforce Config Limits) ---
+        max_sl_dist = fill_price * SL_MAX_PCT
         if direction == BUY:
-            sl_price = float(sl_price) if not np.isnan(sl_price) else fill_price * 0.95
+            min_allowed_sl = fill_price - max_sl_dist
+            if sl_price < min_allowed_sl or np.isnan(sl_price):
+                sl_price = min_allowed_sl
+            
+            # Ensure TP levels are valid numbers
             tp_price = float(tp_price) if not np.isnan(tp_price) else fill_price * 1.10
             tp1 = float(tp1) if not (tp1 is None or np.isnan(tp1)) else fill_price * 1.05
             tp2 = float(tp2) if not (tp2 is None or np.isnan(tp2)) else fill_price * 1.08
         else:
-            sl_price = float(sl_price) if not np.isnan(sl_price) else fill_price * 1.05
+            max_allowed_sl = fill_price + max_sl_dist
+            if sl_price > max_allowed_sl or np.isnan(sl_price):
+                sl_price = max_allowed_sl
+                
+            # Ensure TP levels are valid numbers
             tp_price = float(tp_price) if not np.isnan(tp_price) else fill_price * 0.90
             tp1 = float(tp1) if not (tp1 is None or np.isnan(tp1)) else fill_price * 0.95
             tp2 = float(tp2) if not (tp2 is None or np.isnan(tp2)) else fill_price * 0.92
@@ -753,24 +763,25 @@ class LiveTrader:
 
             # --- DYNAMIC TRAILING PROTECTION (Follow the Price) ---
             # Trigger: 3.0% profit. Trail Distance: 2.0%
-            TRAIL_TRIGGER = 0.030
-            TRAIL_DIST = 0.020
-            
-            pnl_move = (current_price - entry) / entry
-            if direction == BUY:
-                if pnl_move >= TRAIL_TRIGGER:
-                    # SL follows at TRAIL_DIST (2%) below the highest price reached
-                    new_sl = trade["max_price"] * (1 - TRAIL_DIST)
-                    if new_sl > trade["sl_price"]:
-                        trade["sl_price"] = new_sl
-                        logger.info(f"   [TRAIL] {symbol} SL followed up to ${new_sl:.4f}")
-            else:
-                if pnl_move <= -TRAIL_TRIGGER:
-                    # SL follows at TRAIL_DIST (2%) above the lowest price reached
-                    new_sl = trade["min_price"] * (1 + TRAIL_DIST)
-                    if new_sl < trade["sl_price"]:
-                        trade["sl_price"] = new_sl
-                        logger.info(f"   [TRAIL] {symbol} SL followed down to ${new_sl:.4f}")
+            if self.config.get("trailing_stop_enabled", TRAILING_STOP_ENABLED):
+                TRAIL_TRIGGER = 0.030
+                TRAIL_DIST = 0.020
+                
+                pnl_move = (current_price - entry) / entry
+                if direction == BUY:
+                    if pnl_move >= TRAIL_TRIGGER:
+                        # SL follows at TRAIL_DIST (2%) below the highest price reached
+                        new_sl = trade["max_price"] * (1 - TRAIL_DIST)
+                        if new_sl > trade["sl_price"]:
+                            trade["sl_price"] = new_sl
+                            logger.info(f"   [TRAIL] {symbol} SL followed up to ${new_sl:.4f}")
+                else:
+                    if pnl_move <= -TRAIL_TRIGGER:
+                        # SL follows at TRAIL_DIST (2%) above the lowest price reached
+                        new_sl = trade["min_price"] * (1 + TRAIL_DIST)
+                        if new_sl < trade["sl_price"]:
+                            trade["sl_price"] = new_sl
+                            logger.info(f"   [TRAIL] {symbol} SL followed down to ${new_sl:.4f}")
 
             closed = False
             exit_price = None

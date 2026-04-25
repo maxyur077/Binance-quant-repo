@@ -56,6 +56,7 @@ from azalyst.config import (
     BREAKEVEN_AFTER_SCANS, MIN_AGREEMENT, WEIGHTED_THRESHOLD,
     MULTI_WEIGHTS, EXCLUDE_SYMBOLS, MIN_VOLUME_MA, TOP_N_COINS,
     MAX_SAME_DIRECTION, TAKER_FEE, SLIPPAGE_BPS, CANDLE_TF_MIN,
+    TRAILING_STOP_ENABLED,
 )
 from azalyst.indicators import compute_indicators
 from azalyst.strategies import MULTI_STRATEGIES
@@ -237,20 +238,19 @@ class BacktestEngine:
             if pnl_pct > 0 and ((direction == BUY and sl < entry) or (direction == SELL and sl > entry)):
                 trade["sl_price"] = entry
 
-        # Trailing stop
-        if not closed:
-            pnl_pct = (close - entry) / entry * 100 if direction == BUY else (entry - close) / entry * 100
-            trail_trigger = trade["sl_dist_pct"]
-            if pnl_pct >= trail_trigger:
-                trail_dist = close * self.trail_pct
+        # --- DYNAMIC TRAILING PROTECTION (Parity with Trader.py) ---
+        if not closed and TRAILING_STOP_ENABLED:
+            TRAIL_TRIGGER = 0.030
+            TRAIL_DIST = 0.020
+            
+            pnl_move = (close - entry) / entry if direction == BUY else (entry - close) / entry
+            if pnl_move >= TRAIL_TRIGGER:
                 if direction == BUY:
-                    new_sl = close - trail_dist
-                    new_sl = max(new_sl, entry)
+                    new_sl = close * (1 - TRAIL_DIST)
                     if new_sl > trade["sl_price"]:
                         trade["sl_price"] = new_sl
                 else:
-                    new_sl = close + trail_dist
-                    new_sl = min(new_sl, entry)
+                    new_sl = close * (1 + TRAIL_DIST)
                     if new_sl < trade["sl_price"]:
                         trade["sl_price"] = new_sl
 

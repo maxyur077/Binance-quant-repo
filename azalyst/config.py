@@ -41,10 +41,10 @@ MULTI_WEIGHTS = {
     "bnf": 1.0,
     "nbb": 1.5,
     "kane": 0.8,
-    "umar": 2.8,             
+    "umar": 1.8,             
     "zamco": 0.5,
     "jadecap": 0.5,
-    "marci": 2.5,
+    "marci": 1.5,
     "fvg": 1.5,              
     "ote": 1.0,
     "cvd_divergence": 0.5,
@@ -53,7 +53,7 @@ MULTI_WEIGHTS = {
     "bb_trend": 1.8,         
     "band_rider": 2.5,       
     "liquidity_hunter": 3.0, 
-    "alpha_x": 2.0,        # PRIMARY DRIVER (250% Alpha)
+    "alpha_x": 3.0,        # PRIMARY DRIVER (250% Alpha)
 }
 
 HTF_TIMEFRAME = "4h"
@@ -78,3 +78,5 @@ ORDER_CAP_TIERS = [
     (30,   5),
     (500, 10),
 ]
+
+TRAILING_STOP_ENABLED = False

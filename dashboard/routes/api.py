@@ -179,6 +179,23 @@ def api_resume():
     return jsonify({"success": True, "paused": False})
 
 
+@api_bp.route("/api/trading/reset_daily", methods=["POST"])
+@login_required
+def api_reset_daily():
+    if not _verify_user():
+        return jsonify({"error": "Unauthorized"}), 403
+        
+    try:
+        from dashboard.routes import _trader_instance
+        if _trader_instance:
+            _trader_instance.manual_reset_daily_stats()
+            return jsonify({"success": True, "message": "Daily limits reset successfully."})
+        else:
+            return jsonify({"error": "Trader instance not found"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @api_bp.route("/api/wallet", methods=["GET"])
 @login_required
 def api_wallet():

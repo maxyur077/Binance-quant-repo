@@ -142,6 +142,34 @@
     
     window.togglePassword = togglePassword;
 
+    async function manualResetDaily() {
+        if (!confirm("Are you sure you want to reset today's P&L and start a fresh session?")) return;
+        
+        const btn = $("resetDailyBtn");
+        const originalText = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = "RESETTING...";
+        
+        try {
+            const res = await postJSON("/api/trading/reset_daily", {});
+            if (res && res.success) {
+                if (window.showToast) window.showToast("Daily stats reset successfully!");
+                else alert("Daily stats reset successfully!");
+                
+                $("targetModalOverlay").classList.remove("active");
+                refresh();
+            } else {
+                alert(res ? res.error : "Reset failed");
+            }
+        } catch (e) {
+            alert("Connection error");
+        } finally {
+            btn.disabled = false;
+            btn.innerText = originalText;
+        }
+    }
+    window.manualResetDaily = manualResetDaily;
+
     async function togglePause() {
         var btn = $("pauseResumeBtn");
         var isPaused = btn.textContent.includes("Resume");

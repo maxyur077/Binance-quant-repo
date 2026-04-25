@@ -964,10 +964,13 @@ class LiveTrader:
     def reset_daily_pnl(self):
         now = datetime.now(timezone.utc)
         if now.hour == 0 and now.minute < SCAN_INTERVAL_MIN:
-            self.daily_pnl = 0.0
-            self.daily_start_balance = self.balance
-            self.daily_target_reached = False
-            logger.info(f"Daily PnL reset. New starting balance: ${self.balance:.2f}")
+            self.manual_reset_daily_stats()
+
+    def manual_reset_daily_stats(self):
+        self.daily_pnl = 0.0
+        self.daily_start_balance = self.balance
+        self.daily_target_reached = False
+        logger.info(f"Manual Daily Reset performed. New starting balance: ${self.balance:.2f}")
 
     def print_status(self):
         logger.info(f"Balance: ${self.balance:.2f} | Open: {len(self.open_trades)} | "

@@ -17,7 +17,7 @@ RISK_PER_TRADE = 0.07          # Restored to 2.0% for 'Big Profit' windows
 ATR_MULT = 1.4
 TP_RR_RATIO = 2.0           
 SL_MIN_PCT = 0.01
-SL_MAX_PCT = 0.05
+SL_MAX_PCT = 0.03
 MAX_OPEN_TRADES = 10
 MAX_HOLD_SCANS = 48
 BREAKEVEN_AFTER_SCANS = 10     # Middle ground: allows breath but protects wins
@@ -41,19 +41,19 @@ MULTI_WEIGHTS = {
     "bnf": 1.0,
     "nbb": 1.5,
     "kane": 0.8,
-    "umar": 1.8,             
+    "umar": 2.2,             
     "zamco": 0.5,
     "jadecap": 0.5,
-    "marci": 1.5,
+    "marci": 2.0,
     "fvg": 1.5,              
-    "ote": 1.0,
+    "ote": 0.5,
     "cvd_divergence": 0.5,
-    "wyckoff": 1.5,
-    "cbg": 1.2,
+    "wyckoff": 1.8,
+    "cbg": 0.5,
     "bb_trend": 1.8,         
     "band_rider": 2.5,       
     "liquidity_hunter": 3.0, 
-    "alpha_x": 3.0,        # PRIMARY DRIVER (250% Alpha)
+    "alpha_x": 3.0,        # REDUCED: Now requires agreement to fire
 }
 
 HTF_TIMEFRAME = "4h"

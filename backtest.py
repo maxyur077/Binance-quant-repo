@@ -124,13 +124,20 @@ class BacktestEngine:
 
         if is_alpha:
             # SL is the pullback candle extreme
-            # To be safe, we'll use a small buffer (0.2% instead of 0.1%)
             if direction == BUY:
                 sl = bar["low"] * 0.9975 # 0.25% Buffer
+                # CAPPING:
+                min_sl = fill * (1 - self.sl_max_pct)
+                if sl < min_sl: sl = min_sl
+
                 tp1 = fill + move * 1.272
                 tp2 = fill + move * 1.618
             else:
                 sl = bar["high"] * 1.0025
+                # CAPPING:
+                max_sl = fill * (1 + self.sl_max_pct)
+                if sl > max_sl: sl = max_sl
+
                 tp1 = fill - move * 1.272
                 tp2 = fill - move * 1.618
         else:

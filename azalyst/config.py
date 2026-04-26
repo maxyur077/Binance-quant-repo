@@ -41,19 +41,19 @@ MULTI_WEIGHTS = {
     "bnf": 1.0,
     "nbb": 1.5,
     "kane": 0.8,
-    "umar": 2.2,             
+    "umar": 1.8,             
     "zamco": 0.5,
     "jadecap": 0.5,
-    "marci": 2.0,
+    "marci": 1.5,
     "fvg": 1.5,              
-    "ote": 0.5,
+    "ote": 1.0,
     "cvd_divergence": 0.5,
-    "wyckoff": 1.8,
-    "cbg": 0.5,
+    "wyckoff": 1.5,
+    "cbg": 1.2,
     "bb_trend": 1.8,         
     "band_rider": 2.5,       
     "liquidity_hunter": 3.0, 
-    "alpha_x": 3.0,        # REDUCED: Now requires agreement to fire
+    "alpha_x": 3.0,        # PRIMARY DRIVER (250% Alpha)
 }
 
 HTF_TIMEFRAME = "4h"

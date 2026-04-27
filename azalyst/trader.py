@@ -560,13 +560,10 @@ class LiveTrader:
             # --- Unleashed Consensus (Agreement=1) ---
             # RESTORED: We use agreement=1 to catch all $1200+ moves.
             # Safety is handled by the '5-Bar Trap Door' exit.
-            dynamic_min = 1
-            
-            htf_df = self.fetch_ohlcv(symbol, HTF_TIMEFRAME, limit=HTF_CANDLE_LIMIT)
-            if not htf_df.empty:
-                htf_df["ema_50"] = htf_df["close"].ewm(span=HTF_EMA_FAST, adjust=False).mean()
-                htf_df["ema_200"] = htf_df["close"].ewm(span=HTF_EMA_SLOW, adjust=False).mean()
-
+            # Adaptive Precision: 2 for Trend, 3 for Sideways
+            adx_val = df["adx_14"].iloc[-1]
+            dynamic_min = 2 if adx_val > 20 else 3
+                
             sig = multi_strategy_scan(df, htf_df=htf_df, min_agreement=dynamic_min)
             if sig is None:
                 continue
@@ -877,9 +874,13 @@ class LiveTrader:
                         reason = "TAKE_PROFIT_FIB2 ✅"
                         closed = True
                     elif tp1 and current_price >= tp1:
-                        exit_price = current_price
-                        reason = "TAKE_PROFIT_FIB1 ✅"
-                        closed = True
+                        # SUPER RUNNER: Lock profit at 0.2% below current price and TRAIL UP!
+                        new_sl = current_price * (1 - 0.002)
+                        if new_sl > trade["sl_price"]:
+                            trade["sl_price"] = new_sl
+                            trade["tp1_hit"] = True
+                            self._save_trade(trade, "open")
+                            logger.info(f"🚀 [SUPER RUNNER] {symbol} Trailing TP at ${new_sl:.4f}")
                 else:
                     if current_price >= sl:
                         exit_price = sl
@@ -890,9 +891,13 @@ class LiveTrader:
                         reason = "TAKE_PROFIT_FIB2 ✅"
                         closed = True
                     elif tp1 and current_price <= tp1:
-                        exit_price = current_price
-                        reason = "TAKE_PROFIT_FIB1 ✅"
-                        closed = True
+                        # SUPER RUNNER: Lock profit at 0.2% above current price and TRAIL DOWN!
+                        new_sl = current_price * (1 + 0.002)
+                        if new_sl < trade["sl_price"]:
+                            trade["sl_price"] = new_sl
+                            trade["tp1_hit"] = True
+                            self._save_trade(trade, "open")
+                            logger.info(f"🚀 [SUPER RUNNER] {symbol} Trailing TP at ${new_sl:.4f}")
 
             if not closed:
                 pnl_pct = (current_price - entry) / entry * 100 if direction == BUY else (entry - current_price) / entry * 100

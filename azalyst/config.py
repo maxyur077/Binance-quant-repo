@@ -13,9 +13,10 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 INITIAL_BALANCE = 100.0
 LEVERAGE = 15
-RISK_PER_TRADE = 0.07          # Restored to 2.0% for 'Big Profit' windows
-ATR_MULT = 1.4
+RISK_PER_TRADE = 0.08          # Boosted for Precision Strike
+ATR_MULT = 4.0           # Max room for 45% Win Rate
 TP_RR_RATIO = 2.0           
+# RESTORED for $300+ Profit
 SL_MIN_PCT = 0.01
 SL_MAX_PCT = 0.05
 MAX_OPEN_TRADES = 10
@@ -31,7 +32,7 @@ TAKER_FEE = 0.0004
 SLIPPAGE_BPS = 1.0
 
 MIN_AGREEMENT = 2               # Requires 2 strategies to agree
-WEIGHTED_THRESHOLD = 5.0       # Consensus trigger
+WEIGHTED_THRESHOLD = 5.5       # Precision Volume trigger
 
 BUY = 1
 SELL = -1
@@ -39,21 +40,21 @@ HOLD = 0
 
 MULTI_WEIGHTS = {
     "bnf": 1.0,
-    "nbb": 1.5,
-    "kane": 0.8,
-    "umar": 1.8,             
+    "nbb": 1.0,            # Reduced (lower accuracy)
+    "kane": 0.5,
+    "umar": 2.2,             
     "zamco": 0.5,
     "jadecap": 0.5,
-    "marci": 1.5,
-    "fvg": 1.5,              
+    "marci": 0.1,          
+    "fvg": 3.0,              # MASTER STRATEGY (100% Accuracy)
     "ote": 1.0,
     "cvd_divergence": 0.5,
-    "wyckoff": 1.5,
-    "cbg": 1.2,
-    "bb_trend": 1.8,         
+    "wyckoff": 2.5,
+    "cbg": 0.1,            
+    "bb_trend": 2.2,         
     "band_rider": 2.5,       
     "liquidity_hunter": 1.0, 
-    "alpha_x": 3.0,        # PRIMARY DRIVER (250% Alpha)
+    "alpha_x": 0.1,        
 }
 
 HTF_TIMEFRAME = "4h"

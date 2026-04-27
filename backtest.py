@@ -101,10 +101,12 @@ class BacktestEngine:
 
     def _consensus(self, df: pd.DataFrame, htf_slice: pd.DataFrame = None) -> dict | None:
         from azalyst.consensus import multi_strategy_scan
-        # --- Adaptive Consensus (Regime Awareness) ---
+        # Adaptive Precision:
+        # Trending (>20) = 2 agreement (Volume Mode)
+        # Sideways (<20) = 3 agreement (Precision Mode)
         adx_val = df["adx_14"].iloc[-1]
-        # Trending = 1 agreement, Sideways = 2 agreement
-        dynamic_min = 1 if adx_val > 20 else 2
+        dynamic_min = 2 if adx_val > 20 else 3
+            
         return multi_strategy_scan(df, htf_df=htf_slice, min_agreement=dynamic_min)
 
     def _open_trade(self, symbol: str, bar: pd.Series, sig: dict, bar_time):
@@ -247,17 +249,23 @@ class BacktestEngine:
             if direction == BUY:
                 if low <= sl:
                     exit_price, reason, closed = sl, "STOP_LOSS", True
+                elif tp1 and high >= tp1:
+                    # SUPER RUNNER: Once TP1 is hit, start trailing 0.2% below current price!
+                    new_sl = high * (1 - 0.002)
+                    trade["sl_price"] = max(trade["sl_price"], new_sl)
+                    trade["tp1_hit"] = True
                 elif tp2 and high >= tp2:
                     exit_price, reason, closed = tp2, "TAKE_PROFIT_FIB2", True
-                elif tp1 and high >= tp1:
-                    exit_price, reason, closed = tp1, "TAKE_PROFIT_FIB1", True
             else:
                 if high >= sl:
                     exit_price, reason, closed = sl, "STOP_LOSS", True
+                elif tp1 and low <= tp1:
+                    # SUPER RUNNER: Once TP1 is hit, start trailing 0.2% above current price!
+                    new_sl = low * (1 + 0.002)
+                    trade["sl_price"] = min(trade["sl_price"], new_sl)
+                    trade["tp1_hit"] = True
                 elif tp2 and low <= tp2:
                     exit_price, reason, closed = tp2, "TAKE_PROFIT_FIB2", True
-                elif tp1 and low <= tp1:
-                    exit_price, reason, closed = tp1, "TAKE_PROFIT_FIB1", True
 
         # Breakeven
         if not closed and trade["scan_count"] >= self.be_scans:

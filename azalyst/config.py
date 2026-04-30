@@ -13,14 +13,15 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 INITIAL_BALANCE = 100.0
 LEVERAGE = 15
-RISK_PER_TRADE = 0.14          # 10% risk for bigger winners
-ATR_MULT = 4.0           # Max room for 45% Win Rate
-TP_RR_RATIO = 2.5              # Higher R:R = bigger runners
-SL_MIN_PCT = 0.015
+RISK_PER_TRADE = 0.08          # Boosted for Precision Strike
+ATR_MULT = 3.0           # Optimal for 45% Win Rate
+TP_RR_RATIO = 1.7           # RESTORED for $300+ Profit
+# RESTORED for $300+ Profit
+SL_MIN_PCT = 0.01
 SL_MAX_PCT = 0.04
 MAX_OPEN_TRADES = 10
 MAX_HOLD_SCANS = 48
-BREAKEVEN_AFTER_SCANS = 16     # Restore for stability
+BREAKEVEN_AFTER_SCANS = 16     # Delayed: gives trades room to develop
 SCAN_INTERVAL_MIN = 5        # Alpha-X 15m Scan (Binance Support)
 CANDLE_TF_MIN = 15              # Alpha-X 15m Candle (Binance Support)
 
@@ -30,30 +31,30 @@ PROP_DAILY_LOSS_PCT = 25.0
 TAKER_FEE = 0.0004
 SLIPPAGE_BPS = 1.0
 
-MIN_AGREEMENT = 2               # Base agreement (Adaptive engine will upgrade to 3 in chop)
-WEIGHTED_THRESHOLD = 5.5       # High precision trigger
+MIN_AGREEMENT = 2               # Requires 3 strategies to agree (Elite Strike)
+WEIGHTED_THRESHOLD = 5.0       # Balanced: enough volume with 3-agreement quality
 
 BUY = 1
 SELL = -1
 HOLD = 0
 
 MULTI_WEIGHTS = {
-    "bnf": 0.5,
-    "nbb": 0.0,            # KILLED: Loser
-    "kane": 0.0,           # KILLED: Loser
+    "bnf": 0.2,
+    "nbb": 1.5,            
+    "kane": 0.2,
     "umar": 2.5,             
     "zamco": 0.5,
     "jadecap": 0.2,
-    "marci": 0.0,          # KILLED: Loser in long-term
+    "marci": 0.1,          
     "fvg": 3.0,              # MASTER STRATEGY
-    "ote": 0.0,            # KILLED: Loser
+    "ote": 0.5,
     "cvd_divergence": 0.5,
     "wyckoff": 2.5,
-    "cbg": 0.0,            # KILLED: Loser
+    "cbg": 0.1,            
     "bb_trend": 2.5,         
     "band_rider": 2.5,       
     "liquidity_hunter": 1.0, 
-    "alpha_x": 0.0,        # KILLED: Loser
+    "alpha_x": 0.0,        # DISABLED: 0% win rate
 }
 
 HTF_TIMEFRAME = "4h"

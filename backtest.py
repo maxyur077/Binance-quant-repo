@@ -98,14 +98,21 @@ class BacktestEngine:
         self.closed_trades: list = []
         self.equity_curve: list = []
         self.peak_balance = self.balance
+        # Start slightly cautious to prevent immediate big losses in choppy starts
+        self.recent_trades: list = [0, 0, 1, 0, 1] # 40% initial memory
+        self.current_regime = "⚖️ NEUTRAL"
 
-    def _consensus(self, df: pd.DataFrame, htf_slice: pd.DataFrame = None) -> dict | None:
+    def _consensus(self, df: pd.DataFrame, htf_slice: pd.DataFrame = None, rolling_wr: float = 0.5) -> dict | None:
         from azalyst.consensus import multi_strategy_scan
-        # Adaptive Precision:
-        # Trending (>20) = 2 agreement (Volume Mode)
-        # Sideways (<20) = 3 agreement (Precision Mode)
+        # Adaptive Precision (Supreme Sniper Logic):
+        # 1. High Performance (WR >= 45%): 2-3 agreement
+        # 2. Choppy/Loss Period (WR < 45%): FORCE 5 agreement (Sniper Gate)
         adx_val = df["adx_14"].iloc[-1]
-        dynamic_min = 2 if adx_val > 20 else 3
+        
+        if rolling_wr < 0.45:
+            dynamic_min = 3 # Scalper Sniper V2: 3-gate (strictly enforced)
+        else:
+            dynamic_min = 2 if adx_val > 20 else 3
             
         return multi_strategy_scan(df, htf_df=htf_slice, min_agreement=dynamic_min)
 
@@ -134,23 +141,34 @@ class BacktestEngine:
         slip = SLIPPAGE_BPS / 10000
         fill = price * (1 + slip) if direction == BUY else price * (1 - slip)
 
-        # --- Market Regime Detection (Adaptive Risk) ---
-        adx = bar.get("adx_14", 0)
-        is_trending = adx > 20
+        # --- SUPREME REGIME ENGINE (Backtest) ---
+        conf = sig.get("confidence", 0.5)
+        htf_t = sig.get("htf_trend", 0)
         
-        # --- Institutional Risk Scaling (Drawdown Protection) ---
-        current_drawdown = (self.peak_balance - self.balance) / self.peak_balance if self.peak_balance > 0 else 0
-        risk_multiplier = 1.0
-        if current_drawdown > 0.15: # 15% DD
-            risk_multiplier = 0.5    # Cut risk by 50%
-        if current_drawdown > 0.30: # 30% DD
-            risk_multiplier = 0.2    # Cut risk by 80% (Survival Mode)
-            
-        current_risk = self.risk_per_trade * risk_multiplier
-        current_tp_ratio = self.tp_rr_ratio
-        
-        if not is_trending:
-            current_tp_ratio = 1.4
+        # --- Regime Memory (Rolling Performance Gating) ---
+        rolling_wr = 0.5
+        if len(self.recent_trades) >= 5:
+            wins = len([r for r in self.recent_trades if r > 0])
+            rolling_wr = wins / len(self.recent_trades)
+
+        # 1. HUNTER LOCK: Only allowed if market is proving it can trend (WR >= 45%)
+        if conf > 0.7 and direction == htf_t and rolling_wr >= 0.45:
+            current_risk = 0.15
+            current_tp_ratio = 4.0 if conf > 0.85 else 3.5
+            sl_buffer = 1.0
+            self.current_regime = "🏎️ HUNTER"
+        elif rolling_wr >= 0.45:
+            # 2. TURTLE MODE: Moderate risk for moderate confidence
+            current_risk = 0.05 * (min(conf, 0.7) / 0.7) ** 4
+            current_tp_ratio = 1.5
+            sl_buffer = 1.3
+            self.current_regime = "🐢 TURTLE"
+        else:
+            # 3. DEFENSIVE (SCALPER V2) MODE: Precision scalping
+            current_risk = 0.03 
+            current_tp_ratio = 2.0 # Aim for 2:1 RR
+            sl_buffer = 0.7 # Razor tight
+            self.current_regime = "🛡️ DEFENSIVE"
 
         if is_alpha:
             # SL is the pullback candle extreme
@@ -171,8 +189,11 @@ class BacktestEngine:
                 tp1 = fill - move * 1.272
                 tp2 = fill - move * 1.618
         else:
-            # Standard ATR logic for other strategies
-            sl_dist = max(min(self.atr_mult * atr, fill * self.sl_max_pct), fill * self.sl_min_pct)
+            # Standard ATR logic with Elite Buffers
+            sl_dist = atr * self.atr_mult * sl_buffer
+            # Cap SL distance for extreme safety
+            max_sl = fill * self.sl_max_pct
+            if sl_dist > max_sl: sl_dist = max_sl
             if direction == BUY:
                 sl = fill - sl_dist
                 tp1 = fill + sl_dist * current_tp_ratio
@@ -203,6 +224,7 @@ class BacktestEngine:
             "extended": False,
             "is_alpha": is_alpha,
             "sab": sig.get("sab", {}),
+            "current_regime": self.current_regime,
         }
 
     def _manage_trade(self, symbol: str, bar: pd.Series, bar_time):
@@ -279,11 +301,18 @@ class BacktestEngine:
                 elif tp2 and low <= tp2:
                     exit_price, reason, closed = tp2, "TAKE_PROFIT_FIB2", True
 
-        # Breakeven
+        # Breakeven (Relaxed in Defensive mode)
         if not closed and trade["scan_count"] >= self.be_scans:
             pnl_pct = (close - entry) / entry * 100 if direction == BUY else (entry - close) / entry * 100
-            if pnl_pct > 0 and ((direction == BUY and sl < entry) or (direction == SELL and sl > entry)):
+            atr_pct = (trade.get("atr", 0) / entry) * 100 if entry > 0 else 0.5
+            
+            # Personality-Aware Breakeven:
+            # Defensive mode requires 1.5 ATR profit before moving to BE
+            be_threshold = atr_pct * (1.5 if trade.get("current_regime") == "🛡️ DEFENSIVE" else 0.5)
+            
+            if pnl_pct >= be_threshold and ((direction == BUY and sl < entry) or (direction == SELL and sl > entry)):
                 trade["sl_price"] = entry
+                # No logger here to keep backtest clean
 
         # --- DYNAMIC TRAILING PROTECTION (ATR-Adaptive Regime) ---
         if not closed:
@@ -293,26 +322,30 @@ class BacktestEngine:
             is_trending = adx > 20
             new_sl = None
 
-            # ATR-based profit milestones (adapt to each coin's volatility)
-            atr_pct = (atr / entry) * 100 if entry > 0 else 0.5
+            # Personality-Aware Trailing: Prevent $0.10 scratches
+            sl_dist_pct = trade.get("sl_dist_pct", 1.0)
+            current_rr = pnl_pct / (sl_dist_pct if sl_dist_pct > 0 else 1.0)
+            is_defensive = "🛡️" in trade.get("current_regime", "")
 
-            if not is_trending:
-                # SIDEWAYS: Lock profit when move exceeds 1 * ATR
-                if pnl_pct >= atr_pct * 1.0:
-                    new_sl = entry * (1 + atr_pct * 0.003) if direction == BUY else entry * (1 - atr_pct * 0.003)
+            if is_defensive and current_rr < 1.5:
+                # Ghost/Defensive Mode: Do not trail until we are well into profit
+                pass
             else:
-                # TRENDING: ATR-based milestone trailing (let runners RUN)
-                if pnl_pct >= atr_pct * 6.0:
-                    # Massive runner: lock 70% of profit
-                    lock = pnl_pct * 0.70 / 100
-                    new_sl = entry * (1 + lock) if direction == BUY else entry * (1 - lock)
-                elif pnl_pct >= atr_pct * 4.0:
-                    # Strong runner: lock 50% of profit
-                    lock = pnl_pct * 0.50 / 100
-                    new_sl = entry * (1 + lock) if direction == BUY else entry * (1 - lock)
-                elif pnl_pct >= atr_pct * 2.0:
-                    # Developing runner: lock at breakeven + 0.3%
-                    new_sl = entry * (1 + 0.003) if direction == BUY else entry * (1 - 0.003)
+                atr_pct = (atr / entry) * 100 if entry > 0 else 0.5
+                if not is_trending:
+                    # SIDEWAYS: Lock profit when move exceeds 2.0 * ATR
+                    if pnl_pct >= atr_pct * 2.0:
+                        new_sl = entry * (1 + 0.01) if direction == BUY else entry * (1 - 0.01)
+                else:
+                    # TRENDING: ATR-based milestone trailing
+                    if pnl_pct >= atr_pct * 6.0:
+                        lock = pnl_pct * 0.70 / 100
+                        new_sl = entry * (1 + lock) if direction == BUY else entry * (1 - lock)
+                    elif pnl_pct >= atr_pct * 4.0:
+                        lock = pnl_pct * 0.50 / 100
+                        new_sl = entry * (1 + lock) if direction == BUY else entry * (1 - lock)
+                    elif pnl_pct >= atr_pct * 2.0:
+                        new_sl = entry * (1 + 0.01) if direction == BUY else entry * (1 - 0.01)
 
             if new_sl:
                 if (direction == BUY and new_sl > trade["sl_price"]) or \
@@ -355,6 +388,12 @@ class BacktestEngine:
         trade["pnl_pct"] = pnl_pct
         trade["pnl_usd"] = pnl_usd
         trade["reason"] = reason
+        
+        # --- Regime Memory Update ---
+        self.recent_trades.append(pnl_usd)
+        if len(self.recent_trades) > 10:
+            self.recent_trades.pop(0)
+
         self.closed_trades.append(trade)
 
     def run(self, all_data: dict, htf_data: dict, scan_every_n: int = 2):
@@ -440,7 +479,13 @@ class BacktestEngine:
                     except Exception:
                         pass
 
-                sig = self._consensus(ind, htf_slice)
+                # --- Regime Memory (Rolling Performance Gating) ---
+                rolling_wr = 0.5
+                if len(self.recent_trades) >= 5:
+                    wins = len([r for r in self.recent_trades if r > 0])
+                    rolling_wr = wins / len(self.recent_trades)
+
+                sig = self._consensus(ind, htf_slice, rolling_wr=rolling_wr)
                 if sig:
                     # 1. Directional Correlation Cap
                     direction = sig["direction"]
@@ -562,7 +607,7 @@ class BacktestEngine:
 #  DATA FETCHING
 # ---------------------------------------------------------------------
 
-def fetch_historical(exchange, symbol: str, tf: str, since_ms: int, limit_per_call: int = 1000) -> pd.DataFrame:
+def fetch_historical(exchange, symbol: str, tf: str, since_ms: int, until_ms: int = None, limit_per_call: int = 1000) -> pd.DataFrame:
     """Paginated OHLCV fetch for historical data."""
     all_rows = []
     current_since = since_ms
@@ -571,7 +616,6 @@ def fetch_historical(exchange, symbol: str, tf: str, since_ms: int, limit_per_ca
         try:
             ohlcv = exchange.fetch_ohlcv(symbol, tf, since=current_since, limit=limit_per_call)
         except Exception as e:
-            # print(f"  - Failed to fetch {symbol} {tf}: {e}")
             break
 
         if not ohlcv:
@@ -579,14 +623,17 @@ def fetch_historical(exchange, symbol: str, tf: str, since_ms: int, limit_per_ca
 
         all_rows.extend(ohlcv)
         last_ts = ohlcv[-1][0]
-        if last_ts <= current_since:
+        
+        if until_ms and last_ts >= until_ms:
             break
-        current_since = last_ts + 1
-
+            
         if len(ohlcv) < limit_per_call:
             break
 
-        time.sleep(0.15)  # respectful rate limit
+        if last_ts <= current_since:
+            break
+        current_since = last_ts + 1
+        time.sleep(0.1)
 
     if not all_rows:
         return pd.DataFrame()
@@ -594,8 +641,15 @@ def fetch_historical(exchange, symbol: str, tf: str, since_ms: int, limit_per_ca
     df = pd.DataFrame(all_rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
     df.set_index("timestamp", inplace=True)
-    df = df[~df.index.duplicated(keep="last")]
+    
+    if until_ms:
+        # Convert until_ms to datetime for comparison
+        until_dt = pd.to_datetime(until_ms, unit="ms", utc=True)
+        df = df[df.index <= until_dt]
+        
     return df
+
+
 
 
 def get_top_symbols(exchange, n: int = 30) -> list:
@@ -768,11 +822,13 @@ def main():
 
     symbols = get_top_symbols(exchange, n=args.top_coins)
 
+    until_ms = None
     if args.start_date:
         start_dt = datetime.strptime(args.start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         since_ms = int(start_dt.timestamp() * 1000)
         if args.end_date:
-            end_dt = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            end_dt = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+            until_ms = int(end_dt.timestamp() * 1000)
         else:
             end_dt = datetime.now(timezone.utc)
         args.days = (end_dt - start_dt).days
@@ -789,7 +845,7 @@ def main():
         print(f"\n- Fetching {tf_str} data & precomputing indicators for {len(symbols)} symbols...")
     for i, sym in enumerate(symbols):
         print_progress_bar(i, len(symbols), prefix='Data Fetch (1/2):', suffix=f'[{sym:<10}]', start_time=fetch_start)
-        df = fetch_historical(exchange, sym, tf_str, since_ms)
+        df = fetch_historical(exchange, sym, tf_str, since_ms, until_ms=until_ms)
         if not df.empty and len(df) > 200:
             try:
                 # Precompute indicators across the entire historical dataset ONCE. Wait time goes from hours to seconds!

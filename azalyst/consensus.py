@@ -56,6 +56,11 @@ def _check_entry_quality(df: pd.DataFrame, direction: int) -> bool:
         if vol < vol_ma * 1.5: # Needs 150% volume to break a squeeze
             return False
 
+    # Panic Filter
+    ema_200 = last.get("ema_200", last["close"])
+    if abs(last["close"] - ema_200) / (ema_200 if ema_200 > 0 else 1) > 0.06:
+        return False
+
     return True
 
 
@@ -81,8 +86,11 @@ def multi_strategy_scan(df: pd.DataFrame, htf_df: Optional[pd.DataFrame] = None,
     sell_strategies = []
 
     for name, func in MULTI_STRATEGIES.items():
+        weight = MULTI_WEIGHTS.get(name, 0.0)
+        if weight <= 0:
+            continue
+            
         sig = func(df)
-        weight = MULTI_WEIGHTS.get(name, 1.0)
 
         # ── Adaptive Regime Weighting ──
         adx_val = last.get("adx_14", 20)
@@ -116,6 +124,18 @@ def multi_strategy_scan(df: pd.DataFrame, htf_df: Optional[pd.DataFrame] = None,
             sell_weight += weight
             sell_strategies.append(name)
 
+    # ── HARD DIRECTIONAL LOCK (Elite Upgrade) ──
+    # Strictly forbid fighting the macro trend
+    if htf_trend == 1 and buy_count < sell_count: return None # No shorts in bull market
+    if htf_trend == -1 and sell_count < buy_count: return None # No longs in bear market
+    
+    # Intelligence: Lean into the macro trend
+    bias_long = 1.5 if htf_trend == 1 else 0.5 if htf_trend == -1 else 1.0
+    bias_short = 1.5 if htf_trend == -1 else 0.5 if htf_trend == 1 else 1.0
+    
+    buy_weight *= bias_long
+    sell_weight *= bias_short
+
     atr_val = df["atr_14"].iloc[-1]
     if np.isnan(atr_val) or atr_val <= 0:
         return None
@@ -129,14 +149,20 @@ def multi_strategy_scan(df: pd.DataFrame, htf_df: Optional[pd.DataFrame] = None,
     
     confidence = (adx_score * 0.4) + (bbw_score * 0.3) + (vol_score * 0.3)
     
+    # ── PANIC GUARD (Institutional) ──
+    # If 15m volatility is > 2.5x the 4h volatility, it's a panic spike. Stay out.
+    if htf_df is not None and not htf_df.empty and "atr_14" in htf_df.columns:
+        htf_atr = htf_df["atr_14"].iloc[-1]
+        if not np.isnan(htf_atr) and atr_val > htf_atr * 2.5:
+            return None
+
     # ── Intelligence: Adaptive Strike Rules ──
-    # High Confidence (>0.7) = Aggressive (2 agree, relaxed HTF)
-    # Low Confidence (<0.4) = Conservative (3 agree, strict HTF)
+    # The passed min_agreement is the ABSOLUTE FLOOR.
     if confidence > 0.7:
-        dynamic_min = 2
+        dynamic_min = max(min_agreement, 2)
         htf_strict = False
     elif confidence < 0.4:
-        dynamic_min = 3
+        dynamic_min = max(min_agreement, 3)
         htf_strict = True
     else:
         dynamic_min = max(min_agreement, 2)
@@ -153,6 +179,8 @@ def multi_strategy_scan(df: pd.DataFrame, htf_df: Optional[pd.DataFrame] = None,
         return {
             "direction": BUY,
             "atr": float(atr_val),
+            "confidence": float(confidence),
+            "htf_trend": htf_trend,
             "signal": f"CONFIDENCE strike ({confidence:.2f})",
             "strategies": buy_strategies,
         }
@@ -167,9 +195,10 @@ def multi_strategy_scan(df: pd.DataFrame, htf_df: Optional[pd.DataFrame] = None,
         return {
             "direction": SELL,
             "atr": float(atr_val),
+            "confidence": float(confidence),
+            "htf_trend": htf_trend,
             "signal": f"CONFIDENCE strike ({confidence:.2f})",
             "strategies": sell_strategies,
         }
 
     return None
-

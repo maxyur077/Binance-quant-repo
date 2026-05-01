@@ -562,7 +562,7 @@ class BacktestEngine:
 #  DATA FETCHING
 # ---------------------------------------------------------------------
 
-def fetch_historical(exchange, symbol: str, tf: str, since_ms: int, limit_per_call: int = 1000) -> pd.DataFrame:
+def fetch_historical(exchange, symbol: str, tf: str, since_ms: int, limit_per_call: int = 1000, until_ms: int = None) -> pd.DataFrame:
     """Paginated OHLCV fetch for historical data."""
     all_rows = []
     current_since = since_ms
@@ -579,6 +579,10 @@ def fetch_historical(exchange, symbol: str, tf: str, since_ms: int, limit_per_ca
 
         all_rows.extend(ohlcv)
         last_ts = ohlcv[-1][0]
+        
+        if until_ms and last_ts >= until_ms:
+            break
+            
         if last_ts <= current_since:
             break
         current_since = last_ts + 1
@@ -595,6 +599,11 @@ def fetch_historical(exchange, symbol: str, tf: str, since_ms: int, limit_per_ca
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
     df.set_index("timestamp", inplace=True)
     df = df[~df.index.duplicated(keep="last")]
+    
+    if until_ms:
+        until_dt = pd.to_datetime(until_ms, unit="ms", utc=True)
+        df = df[df.index <= until_dt]
+        
     return df
 
 
@@ -772,13 +781,24 @@ def main():
         start_dt = datetime.strptime(args.start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         since_ms = int(start_dt.timestamp() * 1000)
         if args.end_date:
-            end_dt = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            end_dt = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+            until_ms = int(end_dt.timestamp() * 1000)
         else:
             end_dt = datetime.now(timezone.utc)
+            until_ms = None
         args.days = (end_dt - start_dt).days
     else:
-        since_dt = datetime.now(timezone.utc) - timedelta(days=args.days)
-        since_ms = int(since_dt.timestamp() * 1000)
+        start_dt = datetime.now(timezone.utc) - timedelta(days=args.days)
+        since_ms = int(start_dt.timestamp() * 1000)
+        until_ms = None
+        end_dt = datetime.now(timezone.utc)
+    
+    if not JSON_OUTPUT:
+        print(f"[OK] Backtest Range: {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')} ({args.days} days)")
+
+    # Anchor HTF lookback to the backtest start date, not current time!
+    htf_lookback_dt = start_dt - timedelta(days=60)
+    htf_since_ms = int(htf_lookback_dt.timestamp() * 1000)
     
     fetch_start = time.time()
 
@@ -789,7 +809,7 @@ def main():
         print(f"\n- Fetching {tf_str} data & precomputing indicators for {len(symbols)} symbols...")
     for i, sym in enumerate(symbols):
         print_progress_bar(i, len(symbols), prefix='Data Fetch (1/2):', suffix=f'[{sym:<10}]', start_time=fetch_start)
-        df = fetch_historical(exchange, sym, tf_str, since_ms)
+        df = fetch_historical(exchange, sym, tf_str, since_ms, until_ms=until_ms)
         if not df.empty and len(df) > 200:
             try:
                 # Precompute indicators across the entire historical dataset ONCE. Wait time goes from hours to seconds!
@@ -801,7 +821,6 @@ def main():
     print_progress_bar(len(symbols), len(symbols), prefix='Data Fetch (1/2):', suffix='[Done]      ', start_time=fetch_start)
 
     # -- Fetch 4h candles for HTF filter --
-    htf_since_ms = int((datetime.now(timezone.utc) - timedelta(days=args.days + 60)).timestamp() * 1000)
     htf_data = {}
     if not JSON_OUTPUT:
         print(f"\n- Fetching 4h HTF data for {len(all_data)} symbols...")

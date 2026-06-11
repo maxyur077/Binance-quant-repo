@@ -448,6 +448,15 @@ class LiveTrader:
                     btc_df = self.fetch_ohlcv(REGIME_BTC_SYMBOL, f"{CANDLE_TF_MIN}m", 1000)
                 if btc_df.empty or len(btc_df) < 200:
                     return
+
+                # --- 2-Hour Regime Throttle (00:00, 02:00, 04:00 UTC) ---
+                # btc_df is the closed slice, so its last index is the closed candle (e.g. 01:45)
+                # We calculate the logical forming candle time (e.g. 02:00) to match the Backtester 't'
+                import pandas as pd
+                logical_t = btc_df.index[-1] + pd.Timedelta(minutes=CANDLE_TF_MIN)
+                if logical_t.hour % 2 != 0 or logical_t.minute != 0:
+                    return
+
                 btc_df = compute_indicators(btc_df)
                 btc_htf = self.fetch_ohlcv(REGIME_BTC_SYMBOL, HTF_TIMEFRAME, limit=HTF_CANDLE_LIMIT)
                 if not btc_htf.empty:

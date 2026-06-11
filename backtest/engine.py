@@ -69,7 +69,10 @@ class BacktestEngine:
         if idx < 200:
             return
 
-        btc_slice = df.iloc[:idx]
+        # --- 2-Hour Regime Throttle (00:00, 02:00, 04:00 UTC) ---
+        if current_time.hour % 2 != 0 or current_time.minute != 0:
+            return
+
 
         htf_slice = None
         if btc_sym in htf_data:

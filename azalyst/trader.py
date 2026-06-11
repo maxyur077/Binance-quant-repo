@@ -432,7 +432,7 @@ class LiveTrader:
     def get_equity_curve(self) -> list:
         return self.equity_curve
 
-    def _detect_regime(self):
+    def _detect_regime(self, btc_df=None):
         try:
             regime_mode = self.config.get("regime_mode", "auto")
             old_regime = self.current_regime
@@ -444,7 +444,8 @@ class LiveTrader:
                 except ValueError:
                     self.current_regime = MarketRegime.SIDEWAYS
             else:
-                btc_df = self.fetch_ohlcv(REGIME_BTC_SYMBOL, f"{CANDLE_TF_MIN}m", 1000)
+                if btc_df is None:
+                    btc_df = self.fetch_ohlcv(REGIME_BTC_SYMBOL, f"{CANDLE_TF_MIN}m", 1000)
                 if btc_df.empty or len(btc_df) < 200:
                     return
                 btc_df = compute_indicators(btc_df)
@@ -728,21 +729,24 @@ class LiveTrader:
         fill_price = last["close"]
         p = self.active_personality
 
-        raw_sl_dist = atr * p.atr_mult
-        
+        atr = sig.get("atr", 0)
+        atr_val = df["atr_14"].iloc[-1] if "atr_14" in df.columns else atr
+        if atr_val == 0:
+            atr_val = fill_price * 0.01
+
+        raw_sl_dist = atr_val * p.atr_mult
         min_sl_dist = fill_price * p.sl_min_pct
         max_sl_dist = fill_price * p.sl_max_pct
         sl_dist = max(min_sl_dist, min(raw_sl_dist, max_sl_dist))
 
-        sl_price = fill_price - sl_dist if direction == BUY else fill_price + sl_dist
+        tp_dist = sl_dist * p.tp_rr_ratio
 
-        tp_price = sig.get("tp_price")
-        if tp_price is None or np.isnan(tp_price):
-            tp_dist = sl_dist * p.tp_rr_ratio
-            tp_price = fill_price + tp_dist if direction == BUY else fill_price - tp_dist
-
-        sl_price = float(sl_price) if not np.isnan(sl_price) else fill_price * 0.95
-        tp_price = float(tp_price) if not np.isnan(tp_price) else fill_price * 1.05
+        if direction == BUY:
+            sl_price = fill_price - sl_dist
+            tp_price = fill_price + tp_dist
+        else:
+            sl_price = fill_price + sl_dist
+            tp_price = fill_price - tp_dist
 
         effective_risk = self.config.get("risk_per_trade", 0.07) * p.risk_multiplier
         risk_usd = self.balance * effective_risk
@@ -762,22 +766,6 @@ class LiveTrader:
 
         tp1 = tp_price
         tp2 = None
-
-        max_sl_dist = fill_price * p.sl_max_pct
-        if direction == BUY:
-            min_allowed_sl = fill_price - max_sl_dist
-            if sl_price < min_allowed_sl or np.isnan(sl_price):
-                sl_price = min_allowed_sl
-            tp_price = float(tp_price) if not np.isnan(tp_price) else fill_price * 1.10
-            tp1 = float(tp1) if not (tp1 is None or np.isnan(tp1)) else fill_price * 1.05
-            tp2 = float(tp2) if not (tp2 is None or np.isnan(tp2)) else fill_price * 1.08
-        else:
-            max_allowed_sl = fill_price + max_sl_dist
-            if sl_price > max_allowed_sl or np.isnan(sl_price):
-                sl_price = max_allowed_sl
-            tp_price = float(tp_price) if not np.isnan(tp_price) else fill_price * 0.90
-            tp1 = float(tp1) if not (tp1 is None or np.isnan(tp1)) else fill_price * 0.95
-            tp2 = float(tp2) if not (tp2 is None or np.isnan(tp2)) else fill_price * 0.92
 
         sl_dist_pct = abs(fill_price - sl_price) / fill_price * 100
 
@@ -913,15 +901,40 @@ class LiveTrader:
                 if direction == BUY:
                     if pnl_move >= p.trail_trigger_pct:
                         new_sl = trade["max_price"] * (1 - p.trail_distance_pct)
+                        new_sl = max(new_sl, entry) # never below entry
                         if new_sl > trade["sl_price"]:
                             trade["sl_price"] = new_sl
                             logger.info(f"   [TRAIL] {symbol} SL followed up to ${new_sl:.4f}")
                 else:
                     if pnl_move <= -p.trail_trigger_pct:
                         new_sl = trade["min_price"] * (1 + p.trail_distance_pct)
+                        new_sl = min(new_sl, entry) # never above entry
                         if new_sl < trade["sl_price"]:
                             trade["sl_price"] = new_sl
                             logger.info(f"   [TRAIL] {symbol} SL followed down to ${new_sl:.4f}")
+
+            # --- Priority 2: BREAKEVEN PROTECTION (Parity with Backtester) ---
+            if not closed and not trade.get("be_moved", False) and p.trailing_enabled:
+                atr_val = trade.get("atr", current_price * 0.01)
+                if atr_val > 0:
+                    pnl_atr = (current_price - entry) / atr_val if direction == BUY else (entry - current_price) / atr_val
+                    if pnl_atr >= 1.5:
+                        # Move SL to entry + 0.2% lock + fee buffer
+                        from azalyst.config import TAKER_FEE
+                        fee_buffer = entry * TAKER_FEE * 2
+                        profit_lock = entry * 0.002
+                        if direction == BUY:
+                            new_sl = entry + fee_buffer + profit_lock
+                            if new_sl > trade["sl_price"]:
+                                trade["sl_price"] = new_sl
+                                trade["be_moved"] = True
+                                logger.info(f"   [BREAKEVEN] {symbol} SL moved to breakeven + lock (${new_sl:.4f})")
+                        else:
+                            new_sl = entry - fee_buffer - profit_lock
+                            if new_sl < trade["sl_price"]:
+                                trade["sl_price"] = new_sl
+                                trade["be_moved"] = True
+                                logger.info(f"   [BREAKEVEN] {symbol} SL moved to breakeven + lock (${new_sl:.4f})")
 
             closed = False
             exit_price = None
@@ -983,11 +996,11 @@ class LiveTrader:
                         closed = True
                     elif tp2 and current_price >= tp2:
                         exit_price = current_price
-                        reason = "TAKE_PROFIT_FIB2 ✅"
+                        reason = "TAKE_PROFIT_2"
                         closed = True
                     elif tp1 and current_price >= tp1:
                         exit_price = current_price
-                        reason = "TAKE_PROFIT_FIB1 ✅"
+                        reason = "TAKE_PROFIT_1"
                         closed = True
                 else:
                     if current_price >= sl:
@@ -996,49 +1009,12 @@ class LiveTrader:
                         closed = True
                     elif tp2 and current_price <= tp2:
                         exit_price = current_price
-                        reason = "TAKE_PROFIT_FIB2 ✅"
+                        reason = "TAKE_PROFIT_2"
                         closed = True
                     elif tp1 and current_price <= tp1:
                         exit_price = current_price
-                        reason = "TAKE_PROFIT_FIB1 ✅"
+                        reason = "TAKE_PROFIT_1"
                         closed = True
-
-            if not closed:
-                pnl_pct = (current_price - entry) / entry * 100 if direction == BUY else (entry - current_price) / entry * 100
-
-                try:
-                    current_atr = trade.get("atr", current_price * 0.01)
-                except:
-                    current_atr = current_price * 0.01
-
-                sl_dist_pct = trade.get("sl_dist_pct", 2.0)
-                # Ensure trailing doesn't trigger prematurely for tight SLs, causing immediate breakeven exits
-                trail_trigger_pct = max(sl_dist_pct, 1.5)
-
-                if pnl_pct >= trail_trigger_pct:
-                    trail_dist = current_price * 0.01
-                    if direction == BUY:
-                        new_sl = current_price - trail_dist
-                        new_sl = max(new_sl, entry)
-                        if new_sl > trade["sl_price"]:
-                            old_sl = trade["sl_price"]
-                            trade["sl_price"] = new_sl
-                            logger.info(f"📈 Trailing SL moved for {symbol}: ${old_sl:.4f} -> ${new_sl:.4f}")
-                            if self.broker.is_live:
-                                self.broker.cancel_symbol_orders(symbol)
-                                self.broker.place_sl_tp(symbol, "sell", trade["qty"], trade["sl_price"], trade["tp_price"])
-                            self._save_trade(trade, "open")
-                    else:
-                        new_sl = current_price + trail_dist
-                        new_sl = min(new_sl, entry)
-                        if new_sl < trade["sl_price"]:
-                            old_sl = trade["sl_price"]
-                            trade["sl_price"] = new_sl
-                            logger.info(f"📈 Trailing SL moved for {symbol}: ${old_sl:.4f} -> ${new_sl:.4f}")
-                            if self.broker.is_live:
-                                self.broker.cancel_symbol_orders(symbol)
-                                self.broker.place_sl_tp(symbol, "buy", trade["qty"], trade["sl_price"], trade["tp_price"])
-                            self._save_trade(trade, "open")
 
             if not closed and trade["scan_count"] >= MAX_HOLD_SCANS:
                 exit_price = current_price
@@ -1240,24 +1216,45 @@ class LiveTrader:
             logger.info("\nStarting live trading loop...")
             logger.info("Press Ctrl+C to stop\n")
 
+            last_processed_candle_time = None
+
             while self.running:
                 try:
                     self._refresh_config()
-                    self._detect_regime()
                     self._sync_live_balance()
 
                     if time.time() - self.last_symbol_refresh_time >= 4 * 3600:
                         self._refresh_top_coins()
 
-                    self.scan_count += 1
-                    self.last_scan_time = datetime.now(timezone.utc).isoformat()
-                    self.next_scan_time = (datetime.now(timezone.utc) + __import__("datetime").timedelta(minutes=SCAN_INTERVAL_MIN)).isoformat()
+                    # Fetch BTC to determine the current closed candle time
+                    btc_df = self.fetch_ohlcv(REGIME_BTC_SYMBOL, f"{CANDLE_TF_MIN}m", 1000)
+                    is_new_candle = False
+                    if not btc_df.empty:
+                        import pandas as pd
+                        now = pd.Timestamp.utcnow()
+                        # If the last candle is still forming, drop it for regime detection
+                        if btc_df.index[-1] + pd.Timedelta(minutes=CANDLE_TF_MIN) > now:
+                            btc_df_closed = btc_df.iloc[:-1]
+                        else:
+                            btc_df_closed = btc_df
+                            
+                        current_closed_candle = btc_df_closed.index[-1] if not btc_df_closed.empty else None
+                        is_new_candle = (current_closed_candle != last_processed_candle_time) or self.force_scan
 
-                    self.reset_daily_pnl()
-                    self.scan_and_trade()
-                    self.manage_open_trades(main_scan=True)
-                    self._log_equity()
-                    self.print_status()
+                    if is_new_candle:
+                        self._detect_regime(btc_df_closed)
+                        self.scan_count += 1
+                        self.last_scan_time = datetime.now(timezone.utc).isoformat()
+                        self.next_scan_time = (datetime.now(timezone.utc) + __import__("datetime").timedelta(minutes=SCAN_INTERVAL_MIN)).isoformat()
+
+                        self.reset_daily_pnl()
+                        self.scan_and_trade()
+                        self.manage_open_trades(main_scan=True)
+                        self._log_equity()
+                        self.print_status()
+                        
+                        last_processed_candle_time = current_closed_candle
+                        self.force_scan = False
 
                     logger.info(f"Next scan in {SCAN_INTERVAL_MIN} minutes...")
                     loops = (SCAN_INTERVAL_MIN * 60)

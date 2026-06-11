@@ -69,7 +69,7 @@ class BacktestEngine:
         if idx < 200:
             return
 
-        btc_slice = df.iloc[:idx + 1]
+        btc_slice = df.iloc[:idx]
 
         htf_slice = None
         if btc_sym in htf_data:
@@ -110,14 +110,13 @@ class BacktestEngine:
             self.trading_halted = True
             self.halt_until = current_time + pd.Timedelta(days=3) # Halt for 3 days
 
-    def _open_trade(self, symbol: str, bar: pd.Series, sig: dict, bar_time):
+    def _open_trade(self, symbol: str, bar: pd.Series, sig: dict, bar_time, fill_price: float):
         direction = sig["direction"]
         atr = sig["atr"]
-        price = bar["close"]
         p = self.active_personality
 
         slip = SLIPPAGE_BPS / 10000
-        fill = price * (1 + slip) if direction == BUY else price * (1 - slip)
+        fill = fill_price * (1 + slip) if direction == BUY else fill_price * (1 - slip)
 
         atr_val = bar.get("atr_14", atr)
         raw_sl_dist = atr_val * p.atr_mult
@@ -159,7 +158,7 @@ class BacktestEngine:
             "atr_val": atr_val,
             "strategies": sig["strategies"],
             "extended": False,
-            "is_alpha": False,
+            "is_alpha": "alpha_x" in sig["strategies"],
             "regime": self.current_regime.value,
             "personality": self.active_personality.name,
             "max_price": fill,
@@ -258,7 +257,32 @@ class BacktestEngine:
                         trade["sl_price"] = new_sl
 
         # ═══════════════════════════════════════════════════════════════
-        # PRIORITY 4: MAX HOLD TIME
+        # PRIORITY 4: Alpha-X STATEFUL HARVEST (Anti-Flush Patch)
+        # ═══════════════════════════════════════════════════════════════
+        if not closed and trade.get("is_alpha"):
+            upper = bar.get("bb200_upper", 0)
+            lower = bar.get("bb200_lower", 0)
+            tol = upper * 0.0025 # TOUCH_TOL
+
+            if upper > 0 and lower > 0:
+                is_extended = trade.get("extended", False)
+                if not is_extended:
+                    if (direction == BUY and close > upper) or (direction == SELL and close < lower):
+                        trade["extended"] = True
+                        is_extended = True
+                
+                if is_extended and trade["scan_count"] > 0:
+                    is_profitable = (direction == BUY and close > entry) or (direction == SELL and close < entry)
+                    if is_profitable:
+                        if direction == BUY:
+                            if low <= upper + tol and high >= upper - tol:
+                                exit_price, reason, closed = close, "Alpha-X Profit Harvest 🏦", True
+                        else:
+                            if high >= lower - tol and low <= lower + tol:
+                                exit_price, reason, closed = close, "Alpha-X Profit Harvest 🏦", True
+
+        # ═══════════════════════════════════════════════════════════════
+        # PRIORITY 5: MAX HOLD TIME
         # ═══════════════════════════════════════════════════════════════
         if not closed and trade["scan_count"] >= self.max_hold:
             exit_price, reason, closed = close, "MAX_HOLD_TIME", True
@@ -342,26 +366,25 @@ class BacktestEngine:
             if bar_counter % scan_every_n != 0:
                 continue
 
-            if bar_counter % (scan_every_n * 4) == 0:
-                self._detect_regime_at_bar(all_data, htf_data, t)
+            self._detect_regime_at_bar(all_data, htf_data, t)
                 
-                # Dynamic Symbol Re-ranking
-                if dynamic_top:
-                    symbol_volumes = []
-                    for sym, df in all_data.items():
-                        try:
-                            idx = df.index.get_loc(t)
-                            if isinstance(idx, slice):
-                                idx = idx.stop - 1
-                            # Look back 96 bars (24 hours) for volume
-                            start_idx = max(0, idx - 96)
-                            vol = df.iloc[start_idx:idx+1]["volume"].sum()
-                            symbol_volumes.append((sym, vol))
-                        except KeyError:
-                            continue
-                    
-                    symbol_volumes.sort(key=lambda x: x[1], reverse=True)
-                    self.active_symbols = [s for s, _ in symbol_volumes[:top_n]]
+            # Dynamic Symbol Re-ranking
+            if dynamic_top:
+                symbol_volumes = []
+                for sym, df in all_data.items():
+                    try:
+                        idx = df.index.get_loc(t)
+                        if isinstance(idx, slice):
+                            idx = idx.stop - 1
+                        # Look back 96 bars (24 hours) for volume
+                        start_idx = max(0, idx - 96)
+                        vol = df.iloc[start_idx:idx+1]["volume"].sum()
+                        symbol_volumes.append((sym, vol))
+                    except KeyError:
+                        continue
+                
+                symbol_volumes.sort(key=lambda x: x[1], reverse=True)
+                self.active_symbols = [s for s, _ in symbol_volumes[:top_n]]
 
             self._check_drawdown_halt(t)
             if self.trading_halted:
@@ -397,14 +420,21 @@ class BacktestEngine:
                 if idx < 200:
                     continue
 
-                ind = df.iloc[:idx + 1]
+                # Drop the currently forming candle to match LiveTrader
+                ind = df.iloc[:idx]
+                
+                if ind.empty or len(ind) < 200:
+                    continue
 
                 if ind["atr_14"].iloc[-1] == 0 or np.isnan(ind["atr_14"].iloc[-1]):
                     continue
 
                 last = ind.iloc[-1]
                 atr_val = last["atr_14"]
-                price = last["close"]
+                
+                # Execution happens at the current forming candle's open price
+                current_bar = df.iloc[idx]
+                price = current_bar["open"]
                 if price > 0 and atr_val / price > 0.05:
                     continue
 
@@ -442,7 +472,7 @@ class BacktestEngine:
                     if direction == SELL and len(shorts) >= p.max_same_direction:
                         continue
 
-                    self._open_trade(sym, ind.iloc[-1], sig, t)
+                    self._open_trade(sym, ind.iloc[-1], sig, t, price)
 
             self.equity_curve.append({"time": t, "balance": self.balance, "open": len(self.open_trades)})
 

@@ -1,0 +1,292 @@
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    full_name VARCHAR(255),
+    role VARCHAR(20) DEFAULT 'user',
+    is_active BOOLEAN DEFAULT true,
+    is_email_verified BOOLEAN DEFAULT false,
+    last_login_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS user_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    leverage INT DEFAULT 20,
+    risk_per_trade DECIMAL(5,4) DEFAULT 0.07,
+    atr_mult DECIMAL(4,2) DEFAULT 1.4,
+    tp_rr_ratio DECIMAL(4,2) DEFAULT 2.0,
+    margin_per_trade_pct DECIMAL(5,4) DEFAULT 0.12,
+    top_n_coins INT DEFAULT 20,
+    daily_loss_limit_pct DECIMAL(5,2) DEFAULT 25.0,
+    daily_profit_target DECIMAL(12,2) DEFAULT 0.0,
+    regime_mode VARCHAR(20) DEFAULT 'auto',
+    manual_regime VARCHAR(30) DEFAULT 'sideways',
+    symbol_whitelist JSONB DEFAULT '[]',
+    personality_overrides JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    plan VARCHAR(20) NOT NULL DEFAULT 'trial',
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    trial_started_at TIMESTAMPTZ,
+    trial_ends_at TIMESTAMPTZ,
+    current_period_start TIMESTAMPTZ,
+    current_period_end TIMESTAMPTZ,
+    amount_usd DECIMAL(10,2) DEFAULT 50.00,
+    auto_renew BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    subscription_id UUID REFERENCES subscriptions(id),
+    amount_usd DECIMAL(10,2) NOT NULL,
+    amount_sol DECIMAL(16,8),
+    sol_usd_rate DECIMAL(12,4),
+    phantom_wallet_address VARCHAR(64),
+    receiving_wallet_address VARCHAR(64),
+    transaction_signature VARCHAR(128) UNIQUE,
+    reference_key VARCHAR(64),
+    status VARCHAR(20) DEFAULT 'pending',
+    payment_method VARCHAR(20) DEFAULT 'phantom',
+    verified_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS trading_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    mode VARCHAR(20) NOT NULL DEFAULT 'demo',
+    binance_api_key_enc TEXT,
+    binance_api_secret_enc TEXT,
+    binance_api_key_hash VARCHAR(64),
+    is_testnet BOOLEAN DEFAULT false,
+    is_active BOOLEAN DEFAULT true,
+    is_paused BOOLEAN DEFAULT false,
+    initial_balance DECIMAL(16,2) DEFAULT 100.0,
+    current_balance DECIMAL(16,2) DEFAULT 100.0,
+    live_balance DECIMAL(16,2),
+    daily_pnl DECIMAL(16,2) DEFAULT 0.0,
+    daily_start_balance DECIMAL(16,2) DEFAULT 100.0,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS positions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    trading_account_id UUID NOT NULL REFERENCES trading_accounts(id) ON DELETE CASCADE,
+    signal_id UUID,
+    symbol VARCHAR(30) NOT NULL,
+    direction SMALLINT NOT NULL,
+    entry_price DECIMAL(20,8) NOT NULL,
+    qty DECIMAL(20,8) NOT NULL,
+    sl_price DECIMAL(20,8),
+    tp_price DECIMAL(20,8),
+    tp1 DECIMAL(20,8),
+    tp2 DECIMAL(20,8),
+    sl_dist_pct DECIMAL(8,4),
+    atr DECIMAL(20,8),
+    max_price DECIMAL(20,8),
+    min_price DECIMAL(20,8),
+    scan_count INT DEFAULT 0,
+    signal_name TEXT,
+    strategies TEXT,
+    is_alpha BOOLEAN DEFAULT false,
+    be_moved BOOLEAN DEFAULT false,
+    status VARCHAR(20) DEFAULT 'open',
+    entry_time TIMESTAMPTZ NOT NULL,
+    exit_time TIMESTAMPTZ,
+    exit_price DECIMAL(20,8),
+    pnl_pct DECIMAL(10,4),
+    pnl_usd DECIMAL(16,4),
+    close_reason VARCHAR(50),
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS trades (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    position_id UUID REFERENCES positions(id),
+    trading_account_id UUID NOT NULL REFERENCES trading_accounts(id) ON DELETE CASCADE,
+    symbol VARCHAR(30),
+    direction SMALLINT,
+    entry_price DECIMAL(20,8),
+    exit_price DECIMAL(20,8),
+    qty DECIMAL(20,8),
+    pnl_pct DECIMAL(10,4),
+    pnl_usd DECIMAL(16,4),
+    fee_usd DECIMAL(12,4),
+    close_reason VARCHAR(50),
+    strategies TEXT,
+    entry_time TIMESTAMPTZ,
+    exit_time TIMESTAMPTZ,
+    regime VARCHAR(30),
+    personality VARCHAR(30),
+    hold_duration_mins INT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS signals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    symbol VARCHAR(30) NOT NULL,
+    direction SMALLINT NOT NULL,
+    atr DECIMAL(20,8),
+    signal_name TEXT,
+    strategies TEXT[],
+    buy_count INT,
+    sell_count INT,
+    buy_weight DECIMAL(8,2),
+    sell_weight DECIMAL(8,2),
+    regime VARCHAR(30),
+    personality VARCHAR(30),
+    scan_timestamp TIMESTAMPTZ,
+    indicator_snapshot JSONB,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS signal_distributions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    signal_id UUID NOT NULL REFERENCES signals(id) ON DELETE CASCADE,
+    trading_account_id UUID NOT NULL REFERENCES trading_accounts(id) ON DELETE CASCADE,
+    status VARCHAR(20) DEFAULT 'pending',
+    skip_reason TEXT,
+    position_id UUID REFERENCES positions(id),
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS equity_logs (
+    id BIGSERIAL PRIMARY KEY,
+    trading_account_id UUID NOT NULL REFERENCES trading_accounts(id) ON DELETE CASCADE,
+    balance DECIMAL(16,2),
+    open_positions INT,
+    daily_pnl DECIMAL(16,2),
+    regime VARCHAR(30),
+    timestamp TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS demo_trades (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    trading_account_id UUID NOT NULL REFERENCES trading_accounts(id) ON DELETE CASCADE,
+    symbol VARCHAR(30) NOT NULL,
+    direction SMALLINT NOT NULL,
+    entry_price DECIMAL(20,8) NOT NULL,
+    qty DECIMAL(20,8) NOT NULL,
+    sl_price DECIMAL(20,8),
+    tp_price DECIMAL(20,8),
+    sl_dist_pct DECIMAL(8,4),
+    atr DECIMAL(20,8),
+    max_price DECIMAL(20,8),
+    min_price DECIMAL(20,8),
+    scan_count INT DEFAULT 0,
+    signal_name TEXT,
+    strategies TEXT,
+    status VARCHAR(20) DEFAULT 'open',
+    entry_time TIMESTAMPTZ NOT NULL,
+    exit_time TIMESTAMPTZ,
+    exit_price DECIMAL(20,8),
+    pnl_pct DECIMAL(10,4),
+    pnl_usd DECIMAL(16,4),
+    close_reason VARCHAR(50),
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS backtests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    config JSONB,
+    symbols TEXT[],
+    start_date DATE,
+    end_date DATE,
+    status VARCHAR(20) DEFAULT 'running',
+    result_summary JSONB,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    completed_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS backtest_trades (
+    id BIGSERIAL PRIMARY KEY,
+    backtest_id UUID NOT NULL REFERENCES backtests(id) ON DELETE CASCADE,
+    symbol VARCHAR(30),
+    direction SMALLINT,
+    entry_price DECIMAL(20,8),
+    exit_price DECIMAL(20,8),
+    pnl_pct DECIMAL(10,4),
+    pnl_usd DECIMAL(16,4),
+    close_reason VARCHAR(50),
+    strategies TEXT,
+    entry_time TIMESTAMPTZ,
+    exit_time TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS telegram_configs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    bot_token_enc TEXT,
+    chat_id VARCHAR(50),
+    is_active BOOLEAN DEFAULT true,
+    notify_trades BOOLEAN DEFAULT true,
+    notify_signals BOOLEAN DEFAULT false,
+    notify_subscription BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS scan_logs (
+    id BIGSERIAL PRIMARY KEY,
+    symbol VARCHAR(30),
+    regime VARCHAR(30),
+    personality VARCHAR(30),
+    result VARCHAR(10),
+    details JSONB,
+    scan_timestamp TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID REFERENCES users(id),
+    action VARCHAR(100) NOT NULL,
+    resource VARCHAR(50),
+    resource_id VARCHAR(100),
+    details JSONB,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS wallet_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    trading_account_id UUID NOT NULL REFERENCES trading_accounts(id) ON DELETE CASCADE,
+    balance DECIMAL(16,2),
+    source VARCHAR(20) DEFAULT 'binance',
+    timestamp TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS system_settings (
+    key VARCHAR(100) PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+INSERT INTO system_settings (key, value) VALUES ('max_user_limit', '100')
+ON CONFLICT (key) DO NOTHING;
+
+CREATE INDEX IF NOT EXISTS idx_positions_account_status ON positions(trading_account_id, status);
+CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol, status);
+CREATE INDEX IF NOT EXISTS idx_trades_account ON trades(trading_account_id, exit_time DESC);
+CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(scan_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_equity_account_ts ON equity_logs(trading_account_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status, current_period_end);
+CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trading_accounts_api_key ON trading_accounts(binance_api_key_hash) WHERE binance_api_key_hash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_scan_logs_timestamp ON scan_logs(scan_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_demo_trades_account ON demo_trades(trading_account_id, status);

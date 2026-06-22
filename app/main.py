@@ -16,6 +16,14 @@ from app.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
+from app.workers import (
+    scanner_worker,
+    position_worker,
+    subscription_worker,
+    payment_worker,
+    notification_worker
+)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -26,7 +34,22 @@ async def lifespan(app: FastAPI):
         # Initialize singleton
         get_supabase_client()
         logger.info("Supabase client initialized.")
+        
+    logger.info("Starting background workers...")
+    scanner_worker.start()
+    position_worker.start()
+    subscription_worker.start()
+    payment_worker.start()
+    notification_worker.start()
+    
     yield
+    
+    logger.info("Stopping background workers...")
+    scanner_worker.stop()
+    position_worker.stop()
+    subscription_worker.stop()
+    payment_worker.stop()
+    notification_worker.stop()
     logger.info(f"Shutting down {__app_name__}")
 
 

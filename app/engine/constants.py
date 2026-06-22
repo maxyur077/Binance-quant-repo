@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+# Trading Signals
+BUY = 1
+SELL = -1
+HOLD = 0
+
+# Market Constants
+TAKER_FEE = 0.0004
+SLIPPAGE_BPS = 1.0
+
+# Scan & Holds
+MAX_HOLD_SCANS = 48
+BREAKEVEN_AFTER_SCANS = 10
+SCAN_INTERVAL_MIN = 15
+CANDLE_TF_MIN = 15
+
+# Higher Timeframe Configuration
+HTF_TIMEFRAME = "4h"
+HTF_CANDLE_LIMIT = 1000
+HTF_EMA_FAST = 50
+HTF_EMA_SLOW = 200
+
+# Defaults for Fallback
+MIN_AGREEMENT = 1
+WEIGHTED_THRESHOLD = 5.0
+MAX_SAME_DIRECTION = 5
+
+# Volume & Coin Configs
+MIN_VOLUME_MA = 70000
+
+EXCLUDE_SYMBOLS = {
+    "USDCUSDT", "TUSDUSDT", "USDPUSDT", "EURUSDT", "FDUSDUSDT",
+    "DAIUSDT", "BUSDUSDT", "PAXGUSDT", "USDDUSDT",
+    "DOGEUSDT",  # Structural negative expectancy: 20% WR, -$75.77 in backtest
+}
+
+GOLD_COINS = [
+    "ADA/USDT:USDT", "AR/USDT:USDT", "BSB/USDT:USDT", "BZ/USDT:USDT", 
+    "ICP/USDT:USDT", "INJ/USDT:USDT", "LAB/USDT:USDT", "LINK/USDT:USDT", 
+    "M/USDT:USDT", "MSTR/USDT:USDT", "ORCA/USDT:USDT", "SKYAI/USDT:USDT", 
+    "SOL/USDT:USDT", "SWARMS/USDT:USDT", "TRX/USDT:USDT", "UB/USDT:USDT", 
+    "VIRTUAL/USDT:USDT", "WLD/USDT:USDT", "ZEN/USDT:USDT", "BCH/USDT:USDT"
+]
+
+LONG_ONLY_COINS = [
+    "BSB/USDT:USDT", "SWARMS/USDT:USDT", "VIRTUAL/USDT:USDT", 
+    "ZEN/USDT:USDT", "AR/USDT:USDT", "INJ/USDT:USDT", "BZ/USDT:USDT", 
+    "M/USDT:USDT", "LAB/USDT:USDT", "BCH/USDT:USDT"
+]
+
+SHORT_ONLY_COINS = [
+    "ORCA/USDT:USDT", "TRX/USDT:USDT", "SOL/USDT:USDT"
+]
+
+ORDER_CAP_TIERS = [
+    (30,   5),
+    (500, 10),
+]
+
+REGIME_SMOOTHING_PERIOD = 5
+REGIME_BTC_SYMBOL = "BTC/USDT:USDT"
+
+SCAN_LIMITS = {
+    "strong_uptrend": 20,
+    "weak_uptrend": 20,
+    "sideways": 15,
+    "weak_downtrend": 10,
+    "strong_downtrend": 10,
+}

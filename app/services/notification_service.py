@@ -28,5 +28,29 @@ class NotificationService:
         except Exception:
             pass
 
+    @staticmethod
+    async def send_telegram_message(user_id: str, message: str) -> None:
+        """Helper to fetch a user's telegram config and send a message."""
+        from app.db.supabase_client import get_supabase_client
+        from app.security.encryption_handler import decrypt
+        
+        supabase = get_supabase_client()
+        res = supabase.table("telegram_configs").select("*").eq("user_id", user_id).eq("is_active", True).execute()
+        
+        if not res.data:
+            return
+            
+        config = res.data[0]
+        enc_token = config.get("bot_token_enc")
+        chat_id = config.get("chat_id")
+        
+        if not enc_token or not chat_id:
+            return
+            
+        try:
+            bot_token = decrypt(enc_token)
+            await NotificationService.send_telegram_alert("Azalyst Alert", message, bot_token, chat_id)
+        except Exception:
+            pass
 
 notification_service = NotificationService()

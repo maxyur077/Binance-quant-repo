@@ -17,7 +17,7 @@ logger = TradeLogger()
 class ScannerWorker(BaseWorker):
     def __init__(self, interval_seconds: int = 60 * 15): # Default 15m
         super().__init__("ScannerWorker", interval_seconds)
-        self.exchange = ccxt.binanceusdm()
+        self.exchange = ccxt.binance()
         self.broker = DemoBroker(self.exchange)
         self.symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT"] # Mock symbols
 

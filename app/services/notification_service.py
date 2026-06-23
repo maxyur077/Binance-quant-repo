@@ -49,7 +49,7 @@ class NotificationService:
             
         try:
             bot_token = decrypt(enc_token)
-            await NotificationService.send_telegram_alert("Azalyst Alert", message, bot_token, chat_id)
+            await NotificationService.send_telegram_alert("Binance Quant Alert", message, bot_token, chat_id)
         except Exception:
             pass
 

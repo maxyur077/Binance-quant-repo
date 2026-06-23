@@ -14,7 +14,7 @@ class QRService:
         recipient: str, 
         amount: float, 
         reference: str, 
-        label: str = "Azalyst Subscription", 
+        label: str = "Binance Quant Subscription", 
         message: str = "Premium Access"
     ) -> bytes:
         if qrcode is None:

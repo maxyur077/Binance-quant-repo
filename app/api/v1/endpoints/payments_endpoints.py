@@ -40,7 +40,7 @@ async def get_payment_qr(payment_id: str, current_user: dict = Depends(get_curre
             recipient=payment["receiving_wallet_address"],
             amount=payment["amount_sol"],
             reference=payment["reference_key"],
-            label="Azalyst Alpha X",
+            label="Binance Quant",
             message=f"Premium Subscription"
         )
         b64_qr = base64.b64encode(qr_bytes).decode("utf-8")

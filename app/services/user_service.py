@@ -139,7 +139,7 @@ class UserService:
         self, api_key: str, api_secret: str, is_testnet: bool
     ) -> dict:
         try:
-            from azalyst.brokers.live_binance import LiveBinanceBroker
+            from app.engine.brokers.live_binance_broker import LiveBinanceBroker
             broker = await asyncio.to_thread(
                 lambda: LiveBinanceBroker(api_key, api_secret, testnet=is_testnet)
             )

@@ -15,11 +15,16 @@ class PaymentService:
     async def create_payment_intent(user_id: str, subscription_id: str) -> dict:
         supabase = get_supabase_client()
         
-        # In a real app we'd fetch the live SOL/USD price
-        # For simplicity, we assume a static rate or fetch it here
-        sol_usd_rate = 150.0  # mock rate
-        amount_usd = settings.SUBSCRIPTION_PRICE_USD
-        amount_sol = round(amount_usd / sol_usd_rate, 8)
+        # Admin can configure subscription_price_usd in system_settings
+        settings_res = supabase.table("system_settings").select("value").eq("key", "subscription_price_usd").execute()
+        
+        if settings_res.data:
+            amount_usd = float(settings_res.data[0]["value"])
+        else:
+            amount_usd = settings.SUBSCRIPTION_PRICE_USD
+            
+        # We don't convert to SOL anymore because we are requesting USDT directly
+        # We keep the column in db null for sol since it's a USDT payment
         
         import secrets
         reference_key = secrets.token_hex(16)
@@ -31,12 +36,10 @@ class PaymentService:
             "user_id": user_id,
             "subscription_id": subscription_id,
             "amount_usd": amount_usd,
-            "amount_sol": amount_sol,
-            "sol_usd_rate": sol_usd_rate,
             "receiving_wallet_address": settings.PHANTOM_RECEIVING_WALLET,
             "reference_key": reference_key,
             "status": "pending",
-            "payment_method": "phantom",
+            "payment_method": "phantom_usdt",
             "expires_at": expires_at.isoformat()
         }
         res = supabase.table("payments").insert(data).execute()

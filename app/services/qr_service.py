@@ -27,7 +27,8 @@ class QRService:
             "amount": str(amount),
             "reference": reference,
             "label": label,
-            "message": message
+            "message": message,
+            "spl-token": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" # USDT on Solana
         }
         
         query_string = urllib.parse.urlencode(params)

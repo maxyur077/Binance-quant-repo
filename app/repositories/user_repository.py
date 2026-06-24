@@ -14,7 +14,7 @@ class UserRepository(BaseRepository):
         result = await asyncio.to_thread(
             lambda: self._table().select("*").eq("email", email).maybe_single().execute()
         )
-        return result.data
+        return result.data if result else None
 
     async def get_user_count(self) -> int:
         return await self.count()

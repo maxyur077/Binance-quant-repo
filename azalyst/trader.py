@@ -1180,6 +1180,21 @@ class LiveTrader:
                 if main_scan or trade.pop("_sl_changed", False):
                     self._save_trade(trade, "open")
 
+                    if self.broker.is_live and not trade.get("is_paper", False) and not closed:
+                        try:
+                            self.broker.cancel_symbol_orders(symbol)
+                            self.broker.place_native_orders(
+                                symbol=symbol,
+                                entry_side="sell" if direction == BUY else "buy",
+                                qty=trade["qty"],
+                                sl_price=trade["sl_price"],
+                                tp_price=trade.get("tp_price", trade.get("tp1")),
+                                callback_rate=0.0
+                            )
+                            logger.info(f"🔄 Native SL updated on Binance for {symbol} to ${trade['sl_price']:.4f}")
+                        except Exception as e:
+                            logger.error(f"Failed to update native SL for {symbol}: {e}")
+
             if not closed and trade["scan_count"] >= MAX_HOLD_SCANS:
                 exit_price = current_price
                 reason = "MAX_HOLD_TIME"

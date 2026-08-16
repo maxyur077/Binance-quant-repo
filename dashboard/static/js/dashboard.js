@@ -631,16 +631,36 @@
         tbody.innerHTML = trades.map(function (t) {
             var sideClass = t.direction === "LONG" ? "side-long" : "side-short";
             var pnlCls = pnlClass(t.pnl_pct);
-            var distPct = t.sl_dist_pct || 2.0;
-            var triggerPrice = t.direction === "LONG"
-                ? t.entry_price * (1 + distPct / 100)
-                : t.entry_price * (1 - distPct / 100);
-
+            var distPct = t.sl_dist_pct !== undefined && t.sl_dist_pct !== null ? t.sl_dist_pct : 4.0;
+            
             var slSubtext = "";
-            if (t.pnl_pct >= distPct) {
-                slSubtext = "<div style='font-size:0.65rem; margin-top: 2px; color:#00f0ff; font-weight:bold;'>⚡ Trailing Active</div>";
+            if (distPct > 0) {
+                var rawPnlPct = t.direction === "LONG"
+                    ? (t.live_price - t.entry_price) / t.entry_price * 100
+                    : (t.entry_price - t.live_price) / t.entry_price * 100;
+                
+                var trailTriggerPct = Math.max(distPct, 1.5);
+                var triggerPrice = t.direction === "LONG"
+                    ? t.entry_price * (1 + trailTriggerPct / 100)
+                    : t.entry_price * (1 - trailTriggerPct / 100);
+
+                var estNextSl = t.direction === "LONG"
+                    ? t.live_price * (1 - distPct / 100)
+                    : t.live_price * (1 + distPct / 100);
+                
+                if (t.direction === "LONG") {
+                    estNextSl = Math.max(estNextSl, t.entry_price);
+                } else {
+                    estNextSl = Math.min(estNextSl, t.entry_price);
+                }
+
+                if (rawPnlPct >= trailTriggerPct) {
+                    slSubtext = "<div style='font-size:0.65rem; margin-top: 2px; color:#00f0ff; font-weight:bold;'>⚡ Trailing Active (" + distPct + "% Trail)</div>";
+                } else {
+                    slSubtext = "<div style='font-size:0.65rem; margin-top: 2px; color:#5a6478;'>Triggers @ " + formatPrice(triggerPrice) + " (Next SL: " + formatPrice(estNextSl) + ")</div>";
+                }
             } else {
-                slSubtext = "<div style='font-size:0.65rem; margin-top: 2px; color:#5a6478;'>Triggers @ " + formatPrice(triggerPrice) + "</div>";
+                slSubtext = "<div style='font-size:0.65rem; margin-top: 2px; color:#ff4d4d; font-weight:bold;'>🚫 Trailing Disabled in Downtrend</div>";
             }
 
             return '<tr class="data-flash">' +
